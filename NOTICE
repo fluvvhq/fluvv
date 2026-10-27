@@ -1,0 +1,10 @@
+Fluvv
+Copyright 2026 The Fluvv Authors
+
+This product includes software developed by The Fluvv Authors
+(https://fluvv.se).
+
+src/fluvv/schemas/odps-1.1.0.schema.json is the JSON Schema of the Open
+Data Product Standard (ODPS) v1.1.0, from the Bitol project
+(https://github.com/bitol-io/open-data-product-standard), licensed under
+the Apache License, Version 2.0.

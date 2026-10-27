@@ -1,0 +1,219 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: silver.sales.cars
+name: sales_cars_silver
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Cleaned, deduplicated, and validated car sales transactions, conformed
+    for downstream consumption.
+  usage: >-
+    Silver layer. Downstream gold-layer Data Products (e.g. a "Car Sales"
+    data product) should read from here rather than from bronze or landing.
+  limitations: >-
+    No cross-source joins or business-level aggregation are applied here —
+    see the corresponding gold-layer Data Product contract for that.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/silver/sales/cars
+    format: delta
+
+schema:
+  - name: sales_cars_silver
+    logicalType: object
+    description: One row per deduplicated, validated car sale transaction.
+    properties:
+      - name: order_id
+        businessName: OrderId
+        primaryKey: true
+        description: Unique identifier for a car sales transaction.
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+      - name: sale_date
+        businessName: SaleDate
+        description: The date the car sale transaction occurred.
+        logicalType: date
+        physicalType: date
+        required: true
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+        required: true
+        relationships:
+          - type: foreignKey
+            to: contracts/silver/sales/locations.yaml#/schema/sales_locations_silver/properties/dealership_location
+      - name: salesperson
+        businessName: Salesperson
+        classification: pii
+        description: "The salesperson who handled the sale, as an abbreviated display name (e.g. \"J. Rivera\")."
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: customer_name
+        businessName: CustomerName
+        classification: sensitive-pii
+        description: The name of the customer who purchased the vehicle.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: make
+        businessName: Make
+        description: The vehicle manufacturer, e.g. Toyota, Honda, Ford.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: model
+        businessName: Model
+        description: The vehicle model, e.g. Camry, Civic, F-150.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: model_year
+        businessName: ModelYear
+        description: "The model year of the vehicle, as assigned by the manufacturer. Renamed from bronze's `year`."
+        logicalType: integer
+        physicalType: int
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE model_year < 1980 OR model_year > 2027"
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+      - name: color
+        businessName: Color
+        description: The exterior color of the vehicle.
+        logicalType: string
+        physicalType: string
+      - name: mileage
+        businessName: Mileage
+        description: The vehicle's odometer reading at time of sale, in miles.
+        logicalType: integer
+        physicalType: int
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE mileage < 0"
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+      - name: price
+        businessName: SalePrice
+        description: The sale price of the vehicle.
+        logicalType: number
+        physicalType: decimal(10,2)
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE price <= 0"
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+      - name: payment_type
+        businessName: PaymentType
+        description: "How the customer paid for the vehicle: Cash, Finance, or Lease."
+        logicalType: string
+        physicalType: string
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE payment_type NOT IN ('Cash', 'Finance', 'Lease')"
+            mustBe: 0
+            dimension: conformity
+            severity: warning
+    quality:
+      - id: silver-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 90
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: silver
+  - property: businessMetrics
+    value:
+      - name: total_sales_value
+        description: Total value of all car sales in this table.
+        sql: "SELECT SUM(price) FROM sales_cars_silver"
+        metricType: SUM
+        unit: DOLLARS
+      - name: average_sale_price
+        description: Average price per car sale.
+        sql: "SELECT AVG(price) FROM sales_cars_silver"
+        metricType: AVERAGE
+        unit: DOLLARS
+      - name: transaction_count
+        description: Number of car sale transactions.
+        sql: "SELECT COUNT(*) FROM sales_cars_silver"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # `sources` are read and registered as temp views named by their `id`;
+  # `transform.sql` is the sole authoritative, executable definition of this
+  # contract's data — here it also does the dedup (row-level logic no
+  # column-by-column mapping could express) and the year -> model_year
+  # rename. `sources` supports N entries — e.g. a gold contract that joins
+  # or unions multiple upstream tables would list each one here and
+  # reference its `id` in transform.sql's FROM/JOIN clauses.
+  # See contracts/bronze/sales/cars.yaml for a simpler, single-source case.
+  - property: sources
+    value:
+      - id: sales_cars_bronze
+        contract: contracts/bronze/sales/cars.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        -- Bronze keeps values as delivered (strings); silver casts them to the
+        -- types its schema declares, until write-time enforcement exists (SPEC.md §2).
+        SELECT
+          order_id,
+          CAST(sale_date AS DATE) AS sale_date,
+          dealership_location,
+          salesperson,
+          customer_name,
+          make,
+          model,
+          CAST(year AS INT) AS model_year,
+          color,
+          CAST(mileage AS INT) AS mileage,
+          CAST(price AS DECIMAL(10,2)) AS price,
+          payment_type
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY order_id ORDER BY _ingested_at DESC
+          ) AS _rn
+          FROM sales_cars_bronze
+          WHERE order_id IS NOT NULL
+        ) AS sales_cars_bronze
+        WHERE _rn = 1

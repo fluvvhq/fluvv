@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluvv.se/schemas/fluvv.schema.json",
+  "title": "Fluvv ingestion extension",
+  "description": "Validates the `value` of the `sources`, `transform`, `ingestion_config` and `businessMetrics` customProperties entries that Fluvv adds to an otherwise-vanilla ODCS v3.x contract. See docs/fluvv/SPEC.md.",
+  "$defs": {
+    "Sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/Source"
+      }
+    },
+    "Source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "contract",
+        "read"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Local alias for this source. The pipeline registers the source's data as a temp view under this name, referenced in transform.sql's FROM/JOIN clauses."
+        },
+        "contract": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Repo-relative path to the Fluvv contract governing this source (e.g. contracts/bronze/sales/cars.yaml), or null when the source is pre-contract (e.g. a landing zone)."
+        },
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage path this source is read from. Required when `contract` is null; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
+        },
+        "format": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Storage format of this source, e.g. csv, delta, parquet, json. Required when `contract` is null; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
+        },
+        "options": {
+          "type": "object",
+          "description": "Optional format-specific read options, e.g. {header: true, delimiter: \",\"} for csv."
+        },
+        "read": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the ingestion framework's reader function used to read this source, e.g. spark_read_file. Exported as-is into the ingestion_config JSON the framework dispatches on."
+        },
+        "transform": {
+          "$ref": "#/$defs/Transform",
+          "description": "Optional per-source step: a SELECT that may reference only this source's own `id`. Its result replaces that view before the contract-level transform runs. Use it to shape one table (select, filter, rename, dedup); combine sources in the contract-level transform."
+        }
+      }
+    },
+    "Transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine",
+        "sql"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": [
+            "pyspark-sql"
+          ],
+          "description": "Execution engine for `sql`. Extensible in future spec revisions."
+        },
+        "sql": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A SELECT statement (or CTE chain). Per source: may reference only that source's own `id`. Contract-level: queries the views registered from `sources` (joins, unions, aggregates) and produces this contract's `schema`; optional only when there is exactly one source."
+        }
+      }
+    },
+    "IngestionConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "write"
+      ],
+      "properties": {
+        "write": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the ingestion framework's writer function used to write this contract's transform output to its `servers` location, e.g. spark_write_file."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "append"
+          ],
+          "default": "overwrite",
+          "description": "Optional Spark write mode for this contract's target. Defaults to overwrite. Only set to append for a target meant to accumulate raw history across runs (e.g. a bronze layer reading a landing zone that may re-deliver records) -- a transform that fully recomputes a dedup/aggregation over its sources each run (e.g. a silver layer's ROW_NUMBER() dedup) must stay on overwrite, or its own declared quality rules (e.g. uniqueness) can fail on rerun."
+        }
+      }
+    },
+    "BusinessMetrics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/BusinessMetric"
+      }
+    },
+    "BusinessMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "sql",
+        "metricType"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Metric name, e.g. total_sales_value."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional. What the metric means, pushed as the OpenMetadata Metric entity's own description."
+        },
+        "sql": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A scalar-returning SELECT statement, run against this contract's own target table to compute the metric's current value. Not executed by OpenMetadata -- fluvv runs it and pushes the result (Section 6.1)."
+        },
+        "metricType": {
+          "type": "string",
+          "enum": [
+            "COUNT",
+            "SUM",
+            "AVERAGE",
+            "RATIO",
+            "PERCENTAGE",
+            "MIN",
+            "MAX",
+            "MEDIAN",
+            "MODE",
+            "STANDARD_DEVIATION",
+            "VARIANCE",
+            "SIMPLE",
+            "CUMULATIVE",
+            "DERIVED",
+            "CONVERSION",
+            "OTHER"
+          ],
+          "description": "OpenMetadata's own Metric.metricType enum, reused as-is rather than inventing a parallel one."
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "COUNT",
+            "DOLLARS",
+            "PERCENTAGE",
+            "TIMESTAMP",
+            "SIZE",
+            "REQUESTS",
+            "EVENTS",
+            "TRANSACTIONS",
+            "OTHER"
+          ],
+          "default": "OTHER",
+          "description": "OpenMetadata's own Metric.unitOfMeasurement enum."
+        }
+      }
+    }
+  }
+}

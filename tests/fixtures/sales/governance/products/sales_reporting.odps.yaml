@@ -1,0 +1,42 @@
+# Sales reporting Data Product, in the Open Data Product Standard (ODPS
+# v1.1.0, Bitol's sibling standard to ODCS). Membership is defined here,
+# by the output ports' `contractId`s -- contracts don't name their product.
+# The owning team is `team.name`; experts are members with `role: expert`.
+# See docs/fluvv/SPEC.md Section 5.
+
+apiVersion: v1.1.0
+kind: DataProduct
+id: sales_reporting
+name: sales_reporting
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Business-ready sales reporting: monthly sales per dealership, dealership
+    performance against headcount, and the employee and location dimensions
+    to slice them by.
+  usage: >-
+    Read these gold tables directly for BI and reporting. Join on
+    dealership_location, the shared key across them.
+
+team:
+  name: sales-analytics-team
+  members:
+    - username: jane.doe
+      role: expert
+
+outputPorts:
+  - name: monthly_dealership_sales
+    description: Car sales aggregated per dealership and month.
+    contractId: gold.sales.cars
+  - name: dealership_performance
+    description: Lifetime sales, headcount and sales per employee per dealership.
+    contractId: gold.sales.dealership_performance
+  - name: dim_employees
+    description: Employee dimension.
+    contractId: gold.sales.employees
+  - name: dim_locations
+    description: Dealership location dimension.
+    contractId: gold.sales.locations

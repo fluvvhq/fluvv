@@ -1,0 +1,157 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: silver.sales.locations
+name: sales_locations_silver
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Cleaned, deduplicated, and validated car sales firm location records,
+    conformed for downstream consumption.
+  usage: >-
+    Silver layer. The gold-layer "dim_locations" dimension table (see
+    contracts/gold/sales/locations.yaml) and other Data Products should
+    read from here rather than from bronze or landing.
+  limitations: >-
+    No cross-source joins or business-level aggregation are applied here —
+    see the corresponding gold-layer dimension contract for that.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/silver/sales/locations
+    format: delta
+
+schema:
+  - name: sales_locations_silver
+    logicalType: object
+    description: One row per deduplicated, validated dealership location.
+    properties:
+      - name: location_id
+        businessName: LocationId
+        primaryKey: true
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        description: Unique location identifier.
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+      - name: firm_name
+        businessName: FirmName
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: address
+        businessName: Address
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: city
+        businessName: City
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: state
+        businessName: State
+        logicalType: string
+        physicalType: string
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE LENGTH(state) <> 2"
+            mustBe: 0
+            dimension: conformity
+            severity: warning
+      - name: zip_code
+        businessName: ZipCode
+        logicalType: string
+        physicalType: string
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE LENGTH(zip_code) <> 5"
+            mustBe: 0
+            dimension: conformity
+            severity: warning
+      - name: phone
+        businessName: DealershipPhone
+        logicalType: string
+        physicalType: string
+      - name: opened_date
+        businessName: OpenedDate
+        logicalType: date
+        physicalType: date
+        required: true
+    quality:
+      - id: silver-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 90
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: silver
+  - property: businessMetrics
+    value:
+      - name: total_locations
+        description: Total number of dealership locations in this table.
+        sql: "SELECT COUNT(*) FROM sales_locations_silver"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  - property: sources
+    value:
+      - id: sales_locations_bronze
+        contract: contracts/bronze/sales/locations.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        -- Bronze keeps values as delivered (strings); silver casts them to the
+        -- types its schema declares, until write-time enforcement exists (SPEC.md §2).
+        SELECT
+          location_id,
+          dealership_location,
+          firm_name,
+          address,
+          city,
+          state,
+          zip_code,
+          phone,
+          CAST(opened_date AS DATE) AS opened_date
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY location_id ORDER BY _ingested_at DESC
+          ) AS _rn
+          FROM sales_locations_bronze
+          WHERE location_id IS NOT NULL
+        ) AS sales_locations_bronze
+        WHERE _rn = 1

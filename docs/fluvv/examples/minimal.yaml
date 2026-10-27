@@ -1,0 +1,61 @@
+# Minimal illustrative Fluvv contract. See docs/fluvv/SPEC.md Section 3.
+# Not a real pipeline contract — kept out of contracts/ so it's never
+# mistaken for one by contract discovery.
+apiVersion: v3.1.0
+kind: DataContract
+id: bronze.example.widgets
+name: example_widgets_bronze
+version: 0.1.0
+status: active
+domain: example
+
+servers:
+  - server: local
+    type: local
+    path: ./data/bronze/example/widgets
+    format: delta
+
+team:
+  name: example-data-team
+
+schema:
+  - name: example_widgets_bronze
+    physicalName: bronze_example_widgets
+    logicalType: object
+    properties:
+      - name: widget_id
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: widget_name
+        logicalType: string
+        physicalType: string
+      - name: _ingested_at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+
+customProperties:
+  - property: medallionLayer
+    value: bronze
+  - property: sources
+    value:
+      - id: widgets_landing
+        contract: null # landing is pre-contract
+        location: ./data/landing/example/widgets
+        format: csv
+        options:
+          header: true
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          widget_id,
+          widget_name,
+          current_timestamp() AS _ingested_at
+        FROM widgets_landing

@@ -1,0 +1,168 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: gold.sales.cars
+name: sales_cars_gold
+version: 0.1.0
+status: active
+domain: sales
+tags:
+  - fact
+
+description:
+  purpose: >-
+    Monthly sales performance summary per dealership, aggregated from the
+    silver layer for direct business consumption (dashboards, reporting)
+    without any further transformation.
+  usage: >-
+    Gold layer. This is the "Car Sales" data product referenced in
+    silver.sales.cars's own description -- read directly by BI/reporting
+    tools rather than silver or bronze.
+  limitations: >-
+    Aggregated at dealership + month grain; no per-transaction drill-down.
+    Read silver.sales.cars directly for that.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/gold/sales/cars
+    format: delta
+
+schema:
+  - name: sales_cars_gold
+    logicalType: object
+    description: One row per dealership per calendar month.
+    properties:
+      - name: dealership_location
+        businessName: DealershipLocation
+        primaryKey: true
+        primaryKeyPosition: 1
+        description: The dealership, identified by its location name (city). The shared join key across the sales tables.
+        logicalType: string
+        physicalType: string
+        required: true
+        relationships:
+          - type: foreignKey
+            to: contracts/gold/sales/locations.yaml#/schema/sales_locations_gold/properties/dealership_location
+      - name: sale_month
+        businessName: SaleMonth
+        primaryKey: true
+        primaryKeyPosition: 2
+        logicalType: date
+        physicalType: date
+        required: true
+        description: First day of the calendar month this row summarizes.
+      - name: transaction_count
+        businessName: TransactionCount
+        description: Number of car sale transactions at the dealership in the month.
+        logicalType: integer
+        physicalType: int
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE transaction_count <= 0"
+            mustBe: 0
+            dimension: completeness
+            severity: error
+      - name: total_sales_value
+        businessName: TotalSalesValue
+        description: Sum of sale prices across the dealership's transactions in the month.
+        logicalType: number
+        physicalType: decimal(12,2)
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE total_sales_value <= 0"
+            mustBe: 0
+            dimension: accuracy
+            severity: error
+      - name: average_sale_price
+        businessName: AverageSalePrice
+        description: Average sale price across the dealership's transactions in the month.
+        logicalType: number
+        physicalType: decimal(10,2)
+        required: true
+      - name: unique_customers
+        businessName: UniqueCustomers
+        description: Number of distinct customers who bought from the dealership in the month.
+        logicalType: integer
+        physicalType: int
+        required: true
+    quality:
+      - id: gold-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+      - id: gold-unique-dealership-month
+        type: sql
+        query: >-
+          SELECT COUNT(*) FROM (
+            SELECT dealership_location, sale_month
+            FROM ${table}
+            GROUP BY dealership_location, sale_month
+            HAVING COUNT(*) > 1
+          ) AS duplicates
+        mustBe: 0
+        dimension: uniqueness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 365
+    unit: d
+  - property: freshness
+    value: 7
+    unit: d
+    driver: analytics
+    description: 'Rebuilt from silver at least weekly: the last successful ingest is at most 7 days old.'
+
+team:
+  name: sales-analytics-team
+  members:
+    - username: jane.doe
+      role: expert
+
+customProperties:
+  - property: medallionLayer
+    value: gold
+  - property: businessMetrics
+    value:
+      - name: total_revenue
+        description: Total sales revenue across every dealership and month in this summary.
+        sql: "SELECT SUM(total_sales_value) FROM sales_cars_gold"
+        metricType: SUM
+        unit: DOLLARS
+      - name: active_dealership_count
+        description: Number of distinct dealerships represented in this summary.
+        sql: "SELECT COUNT(DISTINCT dealership_location) FROM sales_cars_gold"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # Single source: this is a pure aggregation over silver.sales.cars, no
+  # join across multiple sources needed -- see contracts/silver/sales/cars.yaml
+  # for the multi-source-capable pattern this would extend if gold ever
+  # needed to combine car sales with another domain.
+  - property: sources
+    value:
+      - id: sales_cars_silver
+        contract: contracts/silver/sales/cars.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          dealership_location,
+          trunc(sale_date, 'MM') AS sale_month,
+          COUNT(*) AS transaction_count,
+          SUM(price) AS total_sales_value,
+          AVG(price) AS average_sale_price,
+          COUNT(DISTINCT customer_name) AS unique_customers
+        FROM sales_cars_silver
+        GROUP BY dealership_location, trunc(sale_date, 'MM')

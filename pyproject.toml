@@ -1,0 +1,58 @@
+[build-system]
+# 77 is the first setuptools to take `license` as an SPDX expression (PEP 639).
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fluvv"
+version = "1.0.0.dev0"
+description = "Fluvv data contracts: an ODCS v3.1.0 extension that describes a table and how it's built, with lint, compile and export."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The Fluvv Authors", email = "support@fluvv.se" }]
+keywords = ["data contracts", "odcs", "odps", "data governance", "data lineage", "medallion"]
+# Only versions the tests run on are listed.
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Database",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# datacontract-cli needs Python >=3.10. Developed against 3.13.
+requires-python = ">=3.10"
+dependencies = [
+    # Contract tooling: lint/export/test
+    # against ODCS contracts. Scoped to local-file backends only (dataframe:
+    # ibis/pandas/pyarrow, duckdb: local test engine, csv/parquet: local file
+    # formats). We tried datacontract-cli[all] first, which pulls in every
+    # cloud SDK (databricks, azure, snowflake, kafka, iceberg, ...)
+    # simultaneously -- pip's resolver hit "resolution-too-deep" on that
+    # combined graph. Add specific cloud extras later, one at a time, only
+    # when a cloud backend is actually needed: fluvv is local-first.
+    "datacontract-cli[dataframe,duckdb,csv,parquet]==1.1.1",
+    # Already present transitively via datacontract-cli, but fluvv imports
+    # them directly, so they're pinned here rather than relied on implicitly.
+    "pyyaml==6.0.3",
+    "jsonschema==4.26.0",
+    "sqlglot==30.17.0",
+    "typer==0.27.1",
+    "pydantic==2.13.4",
+]
+
+[project.urls]
+Homepage = "https://fluvv.se"
+Documentation = "https://fluvv.se/docs"
+Source = "https://github.com/fluvvhq/fluvv"
+Issues = "https://github.com/fluvvhq/fluvv/issues"
+
+[project.scripts]
+fluvv = "fluvv.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fluvv = ["schemas/*.json"]

@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from importlib.metadata import entry_points
+from pathlib import Path
+from typing import Callable
+
+import typer
+
+from fluvv.export import export_artifacts
+from fluvv.lint import lint
+from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
+
+# Installed packages add commands to the `fluvv` CLI by registering a
+# `register(app)` function under this entry-point group. Fluvv Engine adds
+# ingest and the OpenMetadata commands this way, so the open package never
+# imports it.
+PLUGIN_GROUP = "fluvv.commands"
+
+# Fluvv Engine's commands. Listed only so that, without the engine, they
+# say where they come from instead of failing as unknown commands.
+ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-openmetadata")
+
+
+def lint_command(
+    contract_paths: list[Path] = typer.Argument(..., help="Fluvv contracts and/or governance files (Domain, Glossary, ODPS DataProduct)."),
+) -> None:
+    """Lint contracts and governance files. Exits non-zero if any fail."""
+    all_passed = True
+    for contract_path in contract_paths:
+        result = lint(contract_path)
+        typer.echo(result.report())
+        all_passed &= result.passed
+    raise typer.Exit(code=0 if all_passed else 1)
+
+
+def export_command(
+    contract_paths: list[Path] = typer.Argument(..., help="One or more Fluvv contract YAML files."),
+) -> None:
+    """Export the Spark schema and ingestion_config JSON for one or more contracts."""
+    for contract_path in contract_paths:
+        result = export_artifacts(contract_path)
+        typer.echo(f"{contract_path}:")
+        typer.echo(f"  {result.spark_schema_path}")
+        typer.echo(f"  {result.ingestion_config_path}")
+
+
+def compile_command(
+    out: Path = typer.Option(DEFAULT_MANIFEST_PATH, "--out", help="Where to write the manifest."),
+) -> None:
+    """Compile every contract and governance file under the current
+    directory (the repo root) into one manifest JSON. Run `lint` first: the
+    manifest assumes valid inputs."""
+    typer.echo(write_manifest(Path("."), out))
+
+
+def _engine_required(name: str) -> Callable[[], None]:
+    def command() -> None:
+        typer.echo(
+            f"`fluvv {name}` is part of Fluvv Engine, which isn't installed. "
+            "See https://fluvv.se/engine.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    command.__doc__ = "Part of Fluvv Engine (not installed)."
+    return command
+
+
+def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
+    return [ep.load() for ep in entry_points(group=PLUGIN_GROUP)]
+
+
+def build_app() -> typer.Typer:
+    app = typer.Typer(help="Fluvv tooling: lint, export and compile Fluvv contracts and governance files.")
+
+    @app.callback()
+    def _main() -> None:
+        """(Callback present so `lint` stays an explicit subcommand as more get added.)"""
+
+    app.command(name="lint")(lint_command)
+    app.command(name="export")(export_command)
+    app.command(name="compile")(compile_command)
+    for register in _plugin_registrars():
+        register(app)
+
+    registered = {info.name for info in app.registered_commands}
+    for name in ENGINE_COMMANDS:
+        if name not in registered:
+            app.command(
+                name=name,
+                context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+            )(_engine_required(name))
+    return app
+
+
+app = build_app()
+
+if __name__ == "__main__":
+    app()

@@ -1,0 +1,165 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: gold.sales.employees
+name: sales_employees_gold
+version: 0.1.0
+status: active
+domain: sales
+tags:
+  - dimension
+
+description:
+  purpose: >-
+    Curated dimension table of employees working at car sales firms, one
+    row per employee, for direct business consumption (BI joins,
+    reporting) without any further transformation.
+  usage: >-
+    Gold layer. This is the "dim_employees" dimension table — join it to
+    sales_cars_gold (or silver.sales.cars) on dealership_location to bring
+    in staff attributes, rather than reading silver or bronze directly.
+  limitations: >-
+    No slowly-changing-dimension history — reflects only the latest known
+    attributes per employee, with no row-level change tracking. No
+    employee_id linkage to sales.cars.salesperson yet: that source records
+    the salesperson as an abbreviated display name (e.g. "J. Rivera"), not
+    this table's employee_id, so joining the two on identity still
+    requires a name-matching step.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/gold/sales/employees
+    format: delta
+
+schema:
+  - name: sales_employees_gold
+    # No physicalName: with it, datacontract-cli's test() can't read the local
+    # table and every check fails (SPEC.md Section 4).
+    logicalType: object
+    description: One row per employee — the dimension table for staff attributes.
+    properties:
+      - name: employee_id
+        businessName: EmployeeId
+        primaryKey: true
+        description: Unique employee identifier.
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+      - name: first_name
+        businessName: FirstName
+        classification: pii
+        description: The employee's first name.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: last_name
+        businessName: LastName
+        classification: pii
+        description: The employee's last name.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: job_title
+        businessName: JobTitle
+        description: The employee's job title, e.g. Sales Associate, Finance Manager.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: dealership_location
+        businessName: DealershipLocation
+        description: The dealership, identified by its location name (city). The shared join key across the sales tables.
+        logicalType: string
+        physicalType: string
+        required: true
+        relationships:
+          - type: foreignKey
+            to: contracts/gold/sales/locations.yaml#/schema/sales_locations_gold/properties/dealership_location
+      - name: hire_date
+        businessName: HireDate
+        description: The date the employee was hired.
+        logicalType: date
+        physicalType: date
+        required: true
+      - name: email
+        businessName: EmployeeEmail
+        classification: sensitive-pii
+        description: The employee's work email address.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: phone
+        businessName: EmployeePhone
+        classification: sensitive-pii
+        description: The employee's phone number.
+        logicalType: string
+        physicalType: string
+    quality:
+      - id: gold-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 365
+    unit: d
+  - property: freshness
+    value: 7
+    unit: d
+    driver: analytics
+    description: 'Rebuilt from silver at least weekly: the last successful ingest is at most 7 days old.'
+
+team:
+  name: sales-analytics-team
+  members:
+    - username: jane.doe
+      role: expert
+
+customProperties:
+  - property: medallionLayer
+    value: gold
+  - property: businessMetrics
+    value:
+      - name: employee_headcount
+        description: Number of employees in this dimension.
+        sql: "SELECT COUNT(*) FROM sales_employees_gold"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # Single source: a pure passthrough of silver.sales.employees, exposed
+  # as a gold-layer dimension table (no aggregation) -- contrast with
+  # contracts/gold/sales/cars.yaml, which is a fact-style aggregate over
+  # its own silver source.
+  - property: sources
+    value:
+      - id: sales_employees_silver
+        contract: contracts/silver/sales/employees.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          employee_id,
+          first_name,
+          last_name,
+          job_title,
+          dealership_location,
+          hire_date,
+          email,
+          phone
+        FROM sales_employees_silver

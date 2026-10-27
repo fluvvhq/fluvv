@@ -1,0 +1,138 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: bronze.sales.locations
+name: sales_locations_bronze
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Schema-conformed, minimally transformed ingestion of raw car sales
+    firm location/dealership records from the sales.locations landing zone.
+  usage: >-
+    Intermediate (bronze) layer. Not intended for direct business
+    consumption or as a Data Product — see contracts/silver/sales/locations.yaml
+    once it exists for cleaned, validated data.
+  limitations: >-
+    Preserves source values as ingested aside from typing. May contain
+    duplicate location_ids or records carried over unchanged from landing.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/bronze/sales/locations
+    format: delta
+
+schema:
+  - name: sales_locations_bronze
+    logicalType: object
+    description: One row per ingested dealership location record, typed but otherwise unmodified.
+    properties:
+      - name: location_id
+        businessName: LocationId
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Source location identifier, as received (not yet asserted unique).
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Human-readable dealership name/city, matches sales.cars.dealership_location.
+      - name: firm_name
+        businessName: FirmName
+        logicalType: string
+        physicalType: string
+      - name: address
+        businessName: Address
+        logicalType: string
+        physicalType: string
+      - name: city
+        businessName: City
+        logicalType: string
+        physicalType: string
+      - name: state
+        businessName: State
+        logicalType: string
+        physicalType: string
+      - name: zip_code
+        businessName: ZipCode
+        logicalType: string
+        physicalType: string
+      - name: phone
+        businessName: DealershipPhone
+        logicalType: string
+        physicalType: string
+      - name: opened_date
+        businessName: OpenedDate
+        logicalType: date
+        physicalType: date
+      - name: _source_system
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Originating source identifier (matches the landing [source] path segment).
+      - name: _source_file
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Landing-zone file this record was ingested from.
+      - name: _ingested_at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        description: Ingestion timestamp assigned by the bronze ingestion job.
+    quality:
+      - id: bronze-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 30
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: bronze
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  - property: sources
+    value:
+      - id: sales_locations_landing
+        contract: null # landing is pre-contract, see Section 2.4
+        location: ./data/landing/sales/locations
+        format: csv
+        options:
+          header: true
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+      mode: append
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          location_id,
+          dealership_location,
+          firm_name,
+          address,
+          city,
+          state,
+          zip_code,
+          phone,
+          opened_date,
+          'sales' AS _source_system,
+          input_file_name() AS _source_file,
+          current_timestamp() AS _ingested_at
+        FROM sales_locations_landing

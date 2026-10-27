@@ -1,0 +1,11 @@
+# The sales domain: its owning team and experts, stated once here rather
+# than inferred from whichever team owns its gold contracts. Contracts join
+# it through their ODCS `domain: sales`. See docs/fluvv/SPEC.md Section 5.
+
+apiVersion: fluvv/v1
+kind: Domain
+name: sales
+description: Car sales across the dealership network -- transactions, the staff who make them, and the dealership locations they happen at.
+owner: sales-analytics-team
+experts:
+  - jane.doe

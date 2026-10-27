@@ -1,0 +1,157 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: silver.sales.employees
+name: sales_employees_silver
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Cleaned, deduplicated, and validated employee records for car sales
+    firms, conformed for downstream consumption.
+  usage: >-
+    Silver layer. The gold-layer "dim_employees" dimension table (see
+    contracts/gold/sales/employees.yaml) and other Data Products should
+    read from here rather than from bronze or landing.
+  limitations: >-
+    No cross-source joins or business-level aggregation are applied here —
+    see the corresponding gold-layer dimension contract for that.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/silver/sales/employees
+    format: delta
+
+schema:
+  - name: sales_employees_silver
+    logicalType: object
+    description: One row per deduplicated, validated employee.
+    properties:
+      - name: employee_id
+        businessName: EmployeeId
+        primaryKey: true
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        description: Unique employee identifier.
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+      - name: first_name
+        businessName: FirstName
+        classification: pii
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: last_name
+        businessName: LastName
+        classification: pii
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: job_title
+        businessName: JobTitle
+        logicalType: string
+        physicalType: string
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE job_title NOT IN ('Sales Associate', 'Sales Manager', 'Finance Manager', 'General Manager', 'Service Advisor')"
+            mustBe: 0
+            dimension: conformity
+            severity: warning
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+        required: true
+        relationships:
+          - type: foreignKey
+            to: contracts/silver/sales/locations.yaml#/schema/sales_locations_silver/properties/dealership_location
+      - name: hire_date
+        businessName: HireDate
+        logicalType: date
+        physicalType: date
+        required: true
+      - name: email
+        businessName: EmployeeEmail
+        classification: sensitive-pii
+        logicalType: string
+        physicalType: string
+        required: true
+        quality:
+          - type: sql
+            query: "SELECT COUNT(*) FROM ${table} WHERE email NOT LIKE '%@%.%'"
+            mustBe: 0
+            dimension: conformity
+            severity: warning
+      - name: phone
+        businessName: EmployeePhone
+        classification: sensitive-pii
+        logicalType: string
+        physicalType: string
+    quality:
+      - id: silver-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 90
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: silver
+  - property: businessMetrics
+    value:
+      - name: total_employees
+        description: Total number of employees in this table.
+        sql: "SELECT COUNT(*) FROM sales_employees_silver"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  - property: sources
+    value:
+      - id: sales_employees_bronze
+        contract: contracts/bronze/sales/employees.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        -- Bronze keeps values as delivered (strings); silver casts them to the
+        -- types its schema declares, until write-time enforcement exists (SPEC.md §2).
+        SELECT
+          employee_id,
+          first_name,
+          last_name,
+          job_title,
+          dealership_location,
+          CAST(hire_date AS DATE) AS hire_date,
+          email,
+          phone
+        FROM (
+          SELECT *, ROW_NUMBER() OVER (
+            PARTITION BY employee_id ORDER BY _ingested_at DESC
+          ) AS _rn
+          FROM sales_employees_bronze
+          WHERE employee_id IS NOT NULL
+        ) AS sales_employees_bronze
+        WHERE _rn = 1

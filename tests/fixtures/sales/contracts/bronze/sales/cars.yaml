@@ -1,0 +1,161 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: bronze.sales.cars
+name: sales_cars_bronze
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Schema-conformed, minimally transformed ingestion of raw car sales
+    transactions from the sales.cars landing zone.
+  usage: >-
+    Intermediate (bronze) layer. Not intended for direct business
+    consumption or as a Data Product — see contracts/silver/sales/cars.yaml
+    for cleaned, validated data.
+  limitations: >-
+    Preserves source values as ingested aside from typing. May contain
+    duplicate order_ids or records carried over unchanged from landing.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/bronze/sales/cars
+    format: delta
+
+schema:
+  - name: sales_cars_bronze
+    logicalType: object
+    description: One row per ingested car sale record, typed but otherwise unmodified.
+    properties:
+      - name: order_id
+        businessName: OrderId
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Source order identifier, as received (not yet asserted unique).
+      - name: sale_date
+        businessName: SaleDate
+        logicalType: date
+        physicalType: date
+        required: true
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+      - name: salesperson
+        businessName: Salesperson
+        classification: pii
+        logicalType: string
+        physicalType: string
+      - name: customer_name
+        businessName: CustomerName
+        classification: sensitive-pii
+        logicalType: string
+        physicalType: string
+      - name: make
+        businessName: Make
+        logicalType: string
+        physicalType: string
+      - name: model
+        businessName: Model
+        logicalType: string
+        physicalType: string
+      - name: year
+        businessName: ModelYear
+        logicalType: integer
+        physicalType: int
+        description: Model year, as received. Renamed to model_year in silver.
+      - name: color
+        businessName: Color
+        logicalType: string
+        physicalType: string
+      - name: mileage
+        businessName: Mileage
+        logicalType: integer
+        physicalType: int
+      - name: price
+        businessName: SalePrice
+        logicalType: number
+        physicalType: decimal(10,2)
+      - name: payment_type
+        businessName: PaymentType
+        logicalType: string
+        physicalType: string
+      - name: _source_system
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Originating source identifier (matches the landing [source] path segment).
+      - name: _source_file
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Landing-zone file this record was ingested from.
+      - name: _ingested_at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        description: Ingestion timestamp assigned by the bronze ingestion job.
+    quality:
+      - id: bronze-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 30
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: bronze
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # `sources` are read and registered as temp views named by their `id`;
+  # `transform.sql` is the sole authoritative, executable definition of this
+  # contract's data — it queries those views and produces `schema` above.
+  # No explicit CASTs needed: the pipeline enforces `schema`'s declared
+  # types on write.
+  - property: sources
+    value:
+      - id: sales_cars_landing
+        contract: null # landing is pre-contract, see Section 2.4
+        location: ./data/landing/sales/cars
+        format: csv
+        options:
+          header: true
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+      mode: append
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          order_id,
+          sale_date,
+          dealership_location,
+          salesperson,
+          customer_name,
+          make,
+          model,
+          year,
+          color,
+          mileage,
+          price,
+          payment_type,
+          'sales' AS _source_system,
+          input_file_name() AS _source_file,
+          current_timestamp() AS _ingested_at
+        FROM sales_cars_landing

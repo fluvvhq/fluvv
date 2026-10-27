@@ -1,0 +1,189 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: gold.sales.dealership_performance
+name: sales_dealership_performance_gold
+version: 0.1.0
+status: active
+domain: sales
+tags:
+  - fact
+
+description:
+  purpose: >-
+    One row per dealership: its location attributes, lifetime car sales,
+    headcount, and sales per employee -- combining the cars, employees and
+    locations silver tables.
+  usage: >-
+    Gold layer. Compare dealerships against each other (sales volume vs.
+    staffing). For month-by-month trends use sales_cars_gold instead.
+  limitations: >-
+    Lifetime totals only, no time dimension. Headcount is the current
+    employee roster, not headcount at the time of each sale. Dealerships
+    with no sales or no employees are kept, with zero counts and a null
+    average/sales per employee.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/gold/sales/dealership_performance
+    format: delta
+
+schema:
+  - name: sales_dealership_performance_gold
+    logicalType: object
+    description: One row per dealership with its lifetime sales and headcount.
+    properties:
+      - name: dealership_location
+        businessName: DealershipLocation
+        primaryKey: true
+        description: The dealership, identified by its location name (city). One row each.
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+        relationships:
+          - type: foreignKey
+            to: contracts/gold/sales/locations.yaml#/schema/sales_locations_gold/properties/dealership_location
+      - name: city
+        businessName: City
+        description: City the dealership is in.
+        logicalType: string
+        physicalType: string
+      - name: state
+        businessName: State
+        description: Two-letter US state code of the dealership.
+        logicalType: string
+        physicalType: string
+      - name: opened_date
+        businessName: OpenedDate
+        description: The date the dealership opened.
+        logicalType: date
+        physicalType: date
+      - name: transaction_count
+        businessName: TransactionCount
+        description: Number of car sale transactions at the dealership, all time. 0 when it has none.
+        logicalType: integer
+        physicalType: bigint
+        required: true
+      - name: total_sales_value
+        businessName: TotalSalesValue
+        description: Sum of sale prices across all of the dealership's transactions. 0 when it has none.
+        logicalType: number
+        physicalType: decimal(20,2)
+        required: true
+      - name: average_sale_price
+        businessName: AverageSalePrice
+        description: Average sale price across all of the dealership's transactions. Null when it has none.
+        logicalType: number
+        physicalType: decimal(14,6)
+      - name: employee_count
+        businessName: EmployeeCount
+        description: Number of employees currently at the dealership. 0 when it has none.
+        logicalType: integer
+        physicalType: bigint
+        required: true
+      - name: sales_per_employee
+        businessName: SalesPerEmployee
+        description: total_sales_value divided by employee_count. Null when the dealership has no employees.
+        logicalType: number
+        physicalType: decimal(20,2)
+    quality:
+      - id: gold-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 365
+    unit: d
+  - property: freshness
+    value: 7
+    unit: d
+    driver: analytics
+    description: 'Rebuilt from silver at least weekly: the last successful ingest is at most 7 days old.'
+
+team:
+  name: sales-analytics-team
+
+customProperties:
+  - property: medallionLayer
+    value: gold
+  - property: businessMetrics
+    value:
+      - name: network_sales_per_employee
+        description: Total sales value across the network divided by total headcount.
+        sql: "SELECT SUM(total_sales_value) / NULLIF(SUM(employee_count), 0) FROM sales_dealership_performance_gold"
+        metricType: RATIO
+        unit: DOLLARS
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # Three sources, each shaped by its own per-source transform (which may
+  # read only that source), then combined by the contract-level transform.
+  # Per-source = the shape of one table (here: aggregate to one row per
+  # dealership); combine = the relationships between them (the joins).
+  # Source locations are omitted: they're derived from each source
+  # contract's own `servers`.
+  - property: sources
+    value:
+      - id: cars
+        contract: contracts/silver/sales/cars.yaml
+        read: spark_read_file
+        transform:
+          engine: pyspark-sql
+          sql: |
+            SELECT
+              dealership_location,
+              COUNT(*) AS transaction_count,
+              SUM(price) AS total_sales_value,
+              AVG(price) AS average_sale_price
+            FROM cars
+            GROUP BY dealership_location
+      - id: employees
+        contract: contracts/silver/sales/employees.yaml
+        read: spark_read_file
+        transform:
+          engine: pyspark-sql
+          sql: |
+            SELECT
+              dealership_location,
+              COUNT(*) AS employee_count
+            FROM employees
+            GROUP BY dealership_location
+      - id: locations
+        contract: contracts/silver/sales/locations.yaml
+        read: spark_read_file
+        transform:
+          engine: pyspark-sql
+          sql: |
+            SELECT dealership_location, city, state, opened_date
+            FROM locations
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          l.dealership_location,
+          l.city,
+          l.state,
+          l.opened_date,
+          COALESCE(c.transaction_count, 0) AS transaction_count,
+          COALESCE(c.total_sales_value, 0) AS total_sales_value,
+          c.average_sale_price,
+          COALESCE(e.employee_count, 0) AS employee_count,
+          CAST(COALESCE(c.total_sales_value, 0) / NULLIF(e.employee_count, 0) AS DECIMAL(20,2)) AS sales_per_employee
+        FROM locations AS l
+        LEFT JOIN cars AS c ON c.dealership_location = l.dealership_location
+        LEFT JOIN employees AS e ON e.dealership_location = l.dealership_location

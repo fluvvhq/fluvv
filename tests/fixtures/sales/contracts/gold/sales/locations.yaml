@@ -1,0 +1,163 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: gold.sales.locations
+name: sales_locations_gold
+version: 0.1.0
+status: active
+domain: sales
+tags:
+  - dimension
+
+description:
+  purpose: >-
+    Curated dimension table of car sales firm locations/dealerships, one
+    row per dealership, for direct business consumption (BI joins,
+    reporting) without any further transformation.
+  usage: >-
+    Gold layer. This is the "dim_locations" dimension table — join it to
+    sales_cars_gold (or silver.sales.cars) on dealership_location to bring
+    in firm name/address attributes, rather than reading silver or bronze
+    directly.
+  limitations: >-
+    No slowly-changing-dimension history — reflects only the latest known
+    attributes per dealership, with no row-level change tracking.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/gold/sales/locations
+    format: delta
+
+schema:
+  - name: sales_locations_gold
+    # No physicalName: with it, datacontract-cli's test() can't read the local
+    # table and every check fails (SPEC.md Section 4).
+    logicalType: object
+    description: One row per dealership/location — the dimension table for dealership attributes.
+    properties:
+      - name: location_id
+        businessName: LocationId
+        primaryKey: true
+        description: Unique location identifier.
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness
+            severity: error
+      - name: dealership_location
+        businessName: DealershipLocation
+        description: The dealership, identified by its location name (city). The shared join key across the sales tables.
+        logicalType: string
+        physicalType: string
+        required: true
+        unique: true
+      - name: firm_name
+        businessName: FirmName
+        description: Name of the car sales firm operating the dealership.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: address
+        businessName: Address
+        description: Street address of the dealership.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: city
+        businessName: City
+        description: City the dealership is in.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: state
+        businessName: State
+        description: Two-letter US state code of the dealership.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: zip_code
+        businessName: ZipCode
+        description: Five-digit US ZIP code of the dealership.
+        logicalType: string
+        physicalType: string
+        required: true
+      - name: phone
+        businessName: DealershipPhone
+        description: The dealership's public phone number.
+        logicalType: string
+        physicalType: string
+      - name: opened_date
+        businessName: OpenedDate
+        description: The date the dealership opened.
+        logicalType: date
+        physicalType: date
+        required: true
+    quality:
+      - id: gold-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 365
+    unit: d
+  - property: freshness
+    value: 7
+    unit: d
+    driver: analytics
+    description: 'Rebuilt from silver at least weekly: the last successful ingest is at most 7 days old.'
+
+team:
+  name: sales-analytics-team
+  members:
+    - username: jane.doe
+      role: expert
+
+customProperties:
+  - property: medallionLayer
+    value: gold
+  - property: businessMetrics
+    value:
+      - name: active_location_count
+        description: Number of dealership locations in this dimension.
+        sql: "SELECT COUNT(*) FROM sales_locations_gold"
+        metricType: COUNT
+        unit: COUNT
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  #
+  # Single source: a pure passthrough of silver.sales.locations, exposed
+  # as a gold-layer dimension table (no aggregation) -- contrast with
+  # contracts/gold/sales/cars.yaml, which is a fact-style aggregate over
+  # its own silver source.
+  - property: sources
+    value:
+      - id: sales_locations_silver
+        contract: contracts/silver/sales/locations.yaml
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          location_id,
+          dealership_location,
+          firm_name,
+          address,
+          city,
+          state,
+          zip_code,
+          phone,
+          opened_date
+        FROM sales_locations_silver

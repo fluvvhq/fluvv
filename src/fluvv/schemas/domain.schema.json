@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluvv.se/schemas/domain.schema.json",
+  "title": "Fluvv Domain",
+  "description": "A business domain: its owning team and experts. One file per domain under governance/domains/. Contracts reference it by their ODCS `domain`. See docs/fluvv/SPEC.md Section 5.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "owner"],
+  "properties": {
+    "apiVersion": { "const": "fluvv/v1" },
+    "kind": { "const": "Domain" },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Domain name, matching the ODCS `domain` of its contracts (e.g. sales)."
+    },
+    "description": { "type": "string", "description": "What the domain covers." },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The owning team. A domain has exactly one."
+    },
+    "experts": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Usernames of domain experts."
+    }
+  }
+}

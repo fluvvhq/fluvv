@@ -1,0 +1,136 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: bronze.sales.employees
+name: sales_employees_bronze
+version: 0.1.0
+status: active
+domain: sales
+
+description:
+  purpose: >-
+    Schema-conformed, minimally transformed ingestion of raw employee
+    records for car sales firms from the sales.employees landing zone.
+  usage: >-
+    Intermediate (bronze) layer. Not intended for direct business
+    consumption or as a Data Product — see contracts/silver/sales/employees.yaml
+    once it exists for cleaned, validated data.
+  limitations: >-
+    Preserves source values as ingested aside from typing. May contain
+    duplicate employee_ids or records carried over unchanged from landing.
+
+servers:
+  - server: local
+    type: local
+    path: ./data/bronze/sales/employees
+    format: delta
+
+schema:
+  - name: sales_employees_bronze
+    logicalType: object
+    description: One row per ingested employee record, typed but otherwise unmodified.
+    properties:
+      - name: employee_id
+        businessName: EmployeeId
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Source employee identifier, as received (not yet asserted unique).
+      - name: first_name
+        businessName: FirstName
+        classification: pii
+        logicalType: string
+        physicalType: string
+      - name: last_name
+        businessName: LastName
+        classification: pii
+        logicalType: string
+        physicalType: string
+      - name: job_title
+        businessName: JobTitle
+        logicalType: string
+        physicalType: string
+      - name: dealership_location
+        businessName: DealershipLocation
+        logicalType: string
+        physicalType: string
+        description: Dealership the employee works at, matches sales.locations.dealership_location.
+      - name: hire_date
+        businessName: HireDate
+        logicalType: date
+        physicalType: date
+      - name: email
+        businessName: EmployeeEmail
+        classification: sensitive-pii
+        logicalType: string
+        physicalType: string
+      - name: phone
+        businessName: EmployeePhone
+        classification: sensitive-pii
+        logicalType: string
+        physicalType: string
+      - name: _source_system
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Originating source identifier (matches the landing [source] path segment).
+      - name: _source_file
+        logicalType: string
+        physicalType: string
+        required: true
+        description: Landing-zone file this record was ingested from.
+      - name: _ingested_at
+        logicalType: timestamp
+        physicalType: timestamp
+        required: true
+        description: Ingestion timestamp assigned by the bronze ingestion job.
+    quality:
+      - id: bronze-row-count
+        type: library
+        metric: rowCount
+        mustBeGreaterThan: 0
+        dimension: completeness
+        severity: error
+
+slaProperties:
+  - property: retention
+    value: 30
+    unit: d
+
+team:
+  name: sales-data-team
+
+customProperties:
+  - property: medallionLayer
+    value: bronze
+
+  # Fluvv ingestion config. See docs/fluvv/SPEC.md.
+  - property: sources
+    value:
+      - id: sales_employees_landing
+        contract: null # landing is pre-contract, see Section 2.4
+        location: ./data/landing/sales/employees
+        format: csv
+        options:
+          header: true
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+      mode: append
+  - property: transform
+    value:
+      engine: pyspark-sql
+      sql: |
+        SELECT
+          employee_id,
+          first_name,
+          last_name,
+          job_title,
+          dealership_location,
+          hire_date,
+          email,
+          phone,
+          'sales' AS _source_system,
+          input_file_name() AS _source_file,
+          current_timestamp() AS _ingested_at
+        FROM sales_employees_landing

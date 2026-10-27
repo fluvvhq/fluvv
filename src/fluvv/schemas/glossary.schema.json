@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluvv.se/schemas/glossary.schema.json",
+  "title": "Fluvv Glossary",
+  "description": "A domain's business vocabulary. One file per domain under governance/glossaries/. Contract columns reference a term by their ODCS `businessName`. See docs/fluvv/SPEC.md Section 5.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "domain", "terms"],
+  "properties": {
+    "apiVersion": { "const": "fluvv/v1" },
+    "kind": { "const": "Glossary" },
+    "domain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The domain this glossary belongs to; must have a domain file."
+    },
+    "description": { "type": "string" },
+    "terms": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Term" }
+    }
+  },
+  "$defs": {
+    "Term": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "definition"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9]*$",
+          "description": "PascalCase term name, used as columns' `businessName` (e.g. ModelYear)."
+        },
+        "definition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the term means, independent of any one table. Column-specific notes (renames, aggregation scope) belong in the column's own `description`."
+        },
+        "synonyms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Extra synonyms. Physical column names using the term are added automatically."
+        },
+        "relatedTerms": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Other terms in this glossary this one relates to."
+        }
+      }
+    }
+  }
+}

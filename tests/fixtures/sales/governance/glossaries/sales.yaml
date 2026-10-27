@@ -1,0 +1,90 @@
+# Sales glossary: the single home of every sales term's definition.
+# Columns reference a term by `businessName`; their own `description`
+# stays column-specific (renames, aggregation scope). Synonyms are added
+# automatically from the physical column names that use each term.
+# See docs/fluvv/SPEC.md Section 5.
+
+apiVersion: fluvv/v1
+kind: Glossary
+domain: sales
+description: Business vocabulary for the sales domain. Contract columns use a term through their ODCS `businessName`.
+
+terms:
+  - name: Address
+    definition: Street address of the dealership.
+  - name: AverageSalePrice
+    definition: Average sale price over a group of car sale transactions, e.g. one dealership's month or its full history.
+    relatedTerms: [SalePrice]
+  - name: City
+    definition: City the dealership is in.
+  - name: Color
+    definition: The exterior color of the vehicle.
+  - name: CustomerName
+    definition: The name of the customer who purchased the vehicle.
+  - name: DealershipLocation
+    definition: The dealership, identified by its location name (city). The shared join key across the sales tables.
+  - name: DealershipPhone
+    definition: The dealership's public phone number.
+  - name: EmployeeCount
+    definition: Number of employees working at a dealership.
+    relatedTerms: [DealershipLocation, EmployeeId]
+  - name: EmployeeEmail
+    definition: The employee's work email address.
+  - name: EmployeeId
+    definition: Unique employee identifier.
+    relatedTerms: [DealershipLocation, HireDate, JobTitle]
+  - name: EmployeePhone
+    definition: The employee's phone number.
+  - name: FirmName
+    definition: Name of the car sales firm operating the dealership.
+  - name: FirstName
+    definition: The employee's first name.
+  - name: HireDate
+    definition: The date the employee was hired.
+  - name: JobTitle
+    definition: The employee's job title, e.g. Sales Associate, Finance Manager.
+  - name: LastName
+    definition: The employee's last name.
+  - name: LocationId
+    definition: Unique location identifier.
+    relatedTerms: [Address, DealershipLocation, FirmName]
+  - name: Make
+    definition: The vehicle manufacturer, e.g. Toyota, Honda, Ford.
+  - name: Mileage
+    definition: The vehicle's odometer reading at time of sale, in miles.
+  - name: Model
+    definition: The vehicle model, e.g. Camry, Civic, F-150.
+  - name: ModelYear
+    definition: The model year of the vehicle, as assigned by the manufacturer.
+    relatedTerms: [Make, Mileage, Model]
+  - name: OpenedDate
+    definition: The date the dealership opened.
+  - name: OrderId
+    definition: Unique identifier for a car sales transaction.
+    relatedTerms: [CustomerName, DealershipLocation, PaymentType, Salesperson]
+  - name: PaymentType
+    definition: 'How the customer paid for the vehicle: Cash, Finance, or Lease.'
+  - name: SaleDate
+    definition: The date the car sale transaction occurred.
+  - name: SaleMonth
+    definition: First day of the calendar month a row summarizes.
+  - name: SalePrice
+    definition: The sale price of the vehicle.
+    relatedTerms: [PaymentType]
+  - name: SalesPerEmployee
+    definition: Total sales value of a dealership divided by its number of employees.
+    relatedTerms: [EmployeeCount, TotalSalesValue]
+  - name: Salesperson
+    definition: The salesperson who handled the sale, as an abbreviated display name (e.g. "J. Rivera").
+  - name: State
+    definition: Two-letter US state code of the dealership.
+  - name: TotalSalesValue
+    definition: Sum of sale prices over a group of car sale transactions, e.g. one dealership's month or its full history.
+    relatedTerms: [SalePrice, TransactionCount]
+  - name: TransactionCount
+    definition: Number of car sale transactions in a group, e.g. one dealership's month or its full history.
+  - name: UniqueCustomers
+    definition: Number of distinct customers across a group of car sale transactions.
+    relatedTerms: [CustomerName]
+  - name: ZipCode
+    definition: Five-digit US ZIP code of the dealership.
