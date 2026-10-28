@@ -9,6 +9,7 @@ import typer
 from fluvv.export import export_artifacts
 from fluvv.lint import lint
 from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
+from fluvv.semantic import ProjectCheckError
 
 # Installed packages add commands to the `fluvv` CLI by registering a
 # `register(app)` function under this entry-point group. Fluvv Engine adds
@@ -24,7 +25,8 @@ ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-o
 def lint_command(
     contract_paths: list[Path] = typer.Argument(..., help="Fluvv contracts and/or governance files (Domain, Glossary, ODPS DataProduct)."),
 ) -> None:
-    """Lint contracts and governance files. Exits non-zero if any fail."""
+    """Lint contracts and governance files, each on its own. Exits non-zero
+    if any fail. References between files are checked by `compile`."""
     all_passed = True
     for contract_path in contract_paths:
         result = lint(contract_path)
@@ -48,9 +50,14 @@ def compile_command(
     out: Path = typer.Option(DEFAULT_MANIFEST_PATH, "--out", help="Where to write the manifest."),
 ) -> None:
     """Compile every contract and governance file under the current
-    directory (the repo root) into one manifest JSON. Run `lint` first: the
-    manifest assumes valid inputs."""
-    typer.echo(write_manifest(Path("."), out))
+    directory (the repo root) into one manifest JSON, after checking that
+    their references resolve. Exits non-zero, writing nothing, if any
+    don't. Run `lint` first: compile doesn't re-check each file's shape."""
+    try:
+        typer.echo(write_manifest(Path("."), out))
+    except ProjectCheckError as exc:
+        typer.echo(exc.report())
+        raise typer.Exit(code=1)
 
 
 def _engine_required(name: str) -> Callable[[], None]:

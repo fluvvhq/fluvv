@@ -128,7 +128,7 @@ def build_lineage_graph(repo_root: Path | str = ".") -> dict[str, dict[str, list
     is unavoidable for `downstream` -- nothing in a contract points
     forward to what depends on it -- so it's done once here for every
     contract rather than per-call. A dangling `source.contract` path (a
-    stale/renamed reference) is skipped rather than raising -- lint's
+    stale/renamed reference) is skipped rather than raising -- compile's
     `source-contract-not-found` check is where that gets reported."""
     repo_root = Path(repo_root)
     docs_by_id: dict[str, dict[str, Any]] = {}

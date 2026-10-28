@@ -1,7 +1,11 @@
 """Fluvv lint: datacontract-cli's own lint() (unchanged) plus Fluvv-specific
 validation, aggregated into one pass/fail gate. Governance files (Domain,
-Glossary, ODPS DataProduct) are linted by the same entry point: schema,
-then reference checks. See docs/fluvv/SPEC.md Section 6.
+Glossary, ODPS DataProduct) are linted by the same entry point.
+
+Lint judges one file on its own, so it runs anywhere, inside a repository
+or not. Whether the file's references resolve (domains, glossary terms,
+upstream contracts) is checked by `fluvv compile`. See docs/fluvv/SPEC.md
+Section 6.
 """
 
 from __future__ import annotations
@@ -16,7 +20,6 @@ from fluvv.contract import (
     FLUVV_CUSTOM_PROPERTIES,
     OPTIONAL_FLUVV_CUSTOM_PROPERTIES,
     MissingCustomPropertyError,
-    find_repo_root,
     get_custom_property,
     load_odcs_document,
     parse_extension,
@@ -47,13 +50,12 @@ class LintResult:
         return "\n".join(lines)
 
 
-def lint(contract_path: Path | str, repo_root: Path | str | None = None) -> LintResult:
+def lint(contract_path: Path | str) -> LintResult:
     """Lint a contract, or a governance file (dispatched on its `kind`)."""
     contract_path = Path(contract_path)
-    repo_root = Path(repo_root) if repo_root is not None else find_repo_root(contract_path)
     doc = load_odcs_document(contract_path) or {}
     if doc.get("kind") in GOVERNANCE_KINDS:
-        return lint_governance_file(contract_path, doc, repo_root)
+        return lint_governance_file(contract_path, doc)
     result = LintResult(contract_path=contract_path)
 
     # 1. ODCS-standard validation, fully delegated to datacontract-cli.
@@ -94,17 +96,17 @@ def lint(contract_path: Path | str, repo_root: Path | str | None = None) -> Lint
         except MissingCustomPropertyError as exc:
             result.schema_errors.append(str(exc))
         else:
-            result.semantic_issues = run_semantic_checks(extension, repo_root, doc, contract_path)
+            result.semantic_issues = run_semantic_checks(extension, doc)
 
     return result
 
 
-def lint_governance_file(path: Path, raw: dict, repo_root: Path) -> LintResult:
+def lint_governance_file(path: Path, raw: dict) -> LintResult:
     result = LintResult(contract_path=path)
     result.schema_errors = [
         f"{'/'.join(map(str, error.absolute_path)) or '(root)'}: {error.message}"
         for error in validate_governance_document(raw)
     ]
     if not result.schema_errors:
-        result.semantic_issues = run_governance_file_checks(raw, repo_root)
+        result.semantic_issues = run_governance_file_checks(raw)
     return result

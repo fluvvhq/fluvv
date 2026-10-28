@@ -9,7 +9,8 @@ owner whatever its domain file says, a Data Product's members whatever its
 ODPS output ports list. What *is* derived -- glossary synonyms from
 physical column names -- is derived from facts, never a definition.
 
-Shared by lint (reference checks) and the OpenMetadata push. Spark-free
+Shared by lint (checks on one file), compile (references between files)
+and the OpenMetadata push. Spark-free
 and network-free."""
 
 from __future__ import annotations
@@ -406,6 +407,12 @@ def contract_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
                 "invalid-freshness",
                 "slaProperties freshness needs a positive integer value and a unit of h/d/w (hours, days, weeks)",
             ))
+    if doc.get("dataProduct"):
+        issues.append(GovernanceIssue(
+            "data-product-in-contract",
+            f"dataProduct '{doc['dataProduct']}': Data Product membership is defined by the product, not the table; "
+            f"remove it here and list contract '{doc.get('id')}' under the product's `outputPorts` in {GOVERNANCE_DIR}/products/",
+        ))
     return issues
 
 
@@ -414,27 +421,48 @@ def naming_issues(doc: dict[str, Any], relative_path: tuple[str, ...] | None) ->
     `id` (`<layer>.<domain>.<name>`) and its path under `contracts/`
     (`<layer>/<domain>/<name>.yaml`) must agree with them.
     `relative_path`: the path's parts below `contracts/`, if it's there."""
+    issues = id_issues(doc)
+    if not issues and relative_path is not None:
+        issues = contract_path_issues(doc, relative_path)
+    return issues
+
+
+def id_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
+    """The part of `naming_issues` that needs only the contract itself."""
     layer, domain, contract_id = medallion_layer(doc), doc.get("domain"), str(doc.get("id", ""))
     if layer not in LAYERS:
         return [GovernanceIssue("unknown-medallion-layer", f"medallionLayer '{layer}' is not one of {list(LAYERS)}")]
-    issues = []
     parts = contract_id.split(".")
     if len(parts) != 3 or parts[0] != layer or parts[1] != domain:
-        issues.append(GovernanceIssue(
+        return [GovernanceIssue(
             "contract-naming-mismatch",
             f"id '{contract_id}' must be '{layer}.{domain}.<name>' (medallionLayer.domain.name)",
-        ))
-    elif relative_path is not None and tuple(relative_path) != (layer, domain, f"{parts[2]}.yaml"):
-        issues.append(GovernanceIssue(
+        )]
+    return []
+
+
+def contract_path_issues(doc: dict[str, Any], relative_path: tuple[str, ...]) -> list[GovernanceIssue]:
+    """The part of `naming_issues` that needs the file's place in the
+    repository. Silent while the id itself is wrong: that's `id_issues`."""
+    if id_issues(doc):
+        return []
+    layer, domain, name = str(doc["id"]).split(".")
+    if tuple(relative_path) != (layer, domain, f"{name}.yaml"):
+        return [GovernanceIssue(
             "contract-naming-mismatch",
-            f"contract '{contract_id}' must live at contracts/{layer}/{domain}/{parts[2]}.yaml, not contracts/{'/'.join(relative_path)}",
-        ))
-    return issues
+            f"contract '{doc['id']}' must live at contracts/{layer}/{domain}/{name}.yaml, not contracts/{'/'.join(relative_path)}",
+        )]
+    return []
 
 
 def relationship_issues(doc: dict[str, Any], repo_root: Path) -> list[GovernanceIssue]:
     """Each relationship's `from` columns exist here, and its `to` resolves
     to a column that can be referenced: unique, or the target's primary key."""
+    return [*relationship_shape_issues(doc), *relationship_target_issues(doc, repo_root)]
+
+
+def relationship_shape_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
+    """The part of `relationship_issues` that needs only the contract itself."""
     own_columns = {p["name"] for p in columns(doc)}
     issues = []
     for from_columns, to_refs in relationships(doc):
@@ -443,6 +471,15 @@ def relationship_issues(doc: dict[str, Any], repo_root: Path) -> list[Governance
                 issues.append(GovernanceIssue("invalid-relationship", f"relationship from unknown column '{column}'"))
         if len(from_columns) != len(to_refs):
             issues.append(GovernanceIssue("invalid-relationship", f"relationship from {from_columns} names {len(to_refs)} target column(s)"))
+    return issues
+
+
+def relationship_target_issues(doc: dict[str, Any], repo_root: Path) -> list[GovernanceIssue]:
+    """The part of `relationship_issues` that resolves targets, which may
+    live in other contracts. Skips relationships whose shape is wrong."""
+    issues = []
+    for from_columns, to_refs in relationships(doc):
+        if len(from_columns) != len(to_refs):
             continue
         targets = []
         for ref in to_refs:
@@ -466,8 +503,8 @@ def relationship_issues(doc: dict[str, Any], repo_root: Path) -> list[Governance
 
 
 def contract_reference_issues(doc: dict[str, Any], gov: Governance) -> list[GovernanceIssue]:
-    """The contract's references to shared entities must resolve; it may
-    not define them itself."""
+    """The contract's references to shared entities must resolve. (That it
+    doesn't define them itself is `contract_issues`.)"""
     domain = doc.get("domain")
     issues = []
     if domain not in gov.domains:
@@ -484,19 +521,12 @@ def contract_reference_issues(doc: dict[str, Any], gov: Governance) -> list[Gove
                 f"column '{prop['name']}': businessName '{name}' is not a term in {GOVERNANCE_DIR}/glossaries/{domain}.yaml; "
                 f"add it under `terms:`\n{term_stub(name)}",
             ))
-    if doc.get("dataProduct"):
-        issues.append(GovernanceIssue(
-            "data-product-in-contract",
-            f"dataProduct '{doc['dataProduct']}': Data Product membership is defined by the product, not the table; "
-            f"remove it here and list contract '{doc['id']}' under the product's `outputPorts` in {GOVERNANCE_DIR}/products/",
-        ))
     return issues
 
 
-def glossary_issues(glossary_: Glossary, gov: Governance) -> list[GovernanceIssue]:
+def glossary_issues(glossary_: Glossary) -> list[GovernanceIssue]:
+    """Checks that need only the glossary file itself."""
     issues = []
-    if glossary_.domain not in gov.domains:
-        issues.append(GovernanceIssue("unknown-domain", f"glossary is for domain '{glossary_.domain}', which has no domain file"))
     for term in glossary_.terms.values():
         for target in term.related:
             if target not in glossary_.terms:
@@ -507,12 +537,25 @@ def glossary_issues(glossary_: Glossary, gov: Governance) -> list[GovernanceIssu
     return issues
 
 
-def data_product_issues(product: DataProduct, gov: Governance, contract_ids: set[str]) -> list[GovernanceIssue]:
+def glossary_reference_issues(glossary_: Glossary, gov: Governance) -> list[GovernanceIssue]:
+    """Checks that need the rest of the repository."""
+    if glossary_.domain not in gov.domains:
+        return [GovernanceIssue("unknown-domain", f"glossary is for domain '{glossary_.domain}', which has no domain file")]
+    return []
+
+
+def data_product_issues(product: DataProduct) -> list[GovernanceIssue]:
+    """Checks that need only the product file itself."""
+    if not product.owner:
+        return [GovernanceIssue("missing-product-owner", f"data product '{product.name}': set `team.name` to the owning team")]
+    return []
+
+
+def data_product_reference_issues(product: DataProduct, gov: Governance, contract_ids: set[str]) -> list[GovernanceIssue]:
+    """Checks that need the rest of the repository."""
     issues = []
     if product.domain not in gov.domains:
         issues.append(GovernanceIssue("unknown-domain", f"data product '{product.name}': domain '{product.domain}' has no domain file"))
-    if not product.owner:
-        issues.append(GovernanceIssue("missing-product-owner", f"data product '{product.name}': set `team.name` to the owning team"))
     for contract_id in product.contract_ids:
         if contract_id not in contract_ids:
             issues.append(GovernanceIssue(

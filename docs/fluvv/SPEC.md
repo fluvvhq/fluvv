@@ -189,8 +189,8 @@ catalog naming (catalog = layer, schema = `domain`, table = schema `name`).
 
 `medallionLayer` and ODCS `domain` are the source of truth for where a
 contract sits. The contract `id` and its file path restate them by
-convention, and lint keeps the three in agreement
-(`contract-naming-mismatch`):
+convention. Lint checks the `id` against them and compile checks the
+file path (`contract-naming-mismatch`, Section 6):
 
 ```
 id:   <medallionLayer>.<domain>.<name>          e.g. silver.sales.cars
@@ -340,21 +340,30 @@ The product owns its membership: the contracts named by
 `team.members` with `role: expert`. Any other ODPS field is allowed and
 validated against the ODPS schema.
 
-## 6. Validation and lint
+## 6. Validation: lint and compile
 
-`python -m fluvv lint <file>...` takes contracts and governance files
-alike (dispatched on `kind`) and exits non-zero if any fail.
+Checking happens in two steps, each with its own question:
 
-**Contracts:**
+- `python -m fluvv lint <file>...`: **is each file right on its own?** It
+  takes contracts and governance files alike (dispatched on `kind`), needs
+  nothing but the files it's given (no repository around them), and exits
+  non-zero if any fail.
+- `python -m fluvv compile`: **do the repository's files fit together?**
+  Run from the repository root, it checks every reference between files
+  before writing the manifest (Section 7). If any doesn't resolve, it lists
+  them all, exits non-zero and writes nothing.
+
+Run `lint` first: `compile` doesn't re-check each file's shape.
+
+### 6.1 Lint: contracts
 
 1. ODCS validation, fully delegated to `datacontract-cli`'s `lint()`.
 2. Shape of the Fluvv `customProperties` against
    `fluvv/schemas/fluvv.schema.json`.
-3. Semantic checks (`fluvv/semantic.py`):
+3. Semantic checks on the contract alone (`fluvv/semantic.py`):
 
 | Code | Meaning |
 |---|---|
-| `source-contract-not-found` | `sources[].contract` doesn't resolve to a file. |
 | `source-location-redundant` | `location`/`format` set on a source that has a `contract`. |
 | `source-location-missing` | `location`/`format` missing on a source with `contract: null`. |
 | `source-transform-foreign-reference` | A per-source transform reads something other than its own source. |
@@ -366,27 +375,35 @@ alike (dispatched on `kind`) and exits non-zero if any fail.
 | `invalid-freshness` | Freshness without a positive integer value and an h/d/w unit. |
 | `team-array-deprecated` | `team` is the v3.0 array instead of the v3.1.0 object. |
 | `unknown-medallion-layer` | `medallionLayer` missing or not bronze/silver/gold. |
-| `contract-naming-mismatch` | `id` isn't `<medallionLayer>.<domain>.<name>`, or the file isn't at `contracts/<medallionLayer>/<domain>/<name>.yaml`. |
+| `contract-naming-mismatch` | `id` isn't `<medallionLayer>.<domain>.<name>`. |
 | `invalid-relationship` | A relationship from a column this contract doesn't have, or a `from`/`to` count mismatch. |
-| `relationship-target-not-found` | A relationship's `to` doesn't resolve to a contract file, schema object and column. |
-| `relationship-target-not-unique` | A relationship's target is neither unique nor the target's primary key. |
 | `related-terms-in-contract` | A column still carries `relatedTerms`; move it to the glossary. |
-| `unknown-domain` | `domain` has no domain file. |
-| `unknown-business-term` | `businessName` isn't in the domain's glossary. The message includes a ready-to-paste term stub. |
 | `data-product-in-contract` | The contract sets `dataProduct`; list it in the product's `outputPorts` instead. |
 
-**Governance files:** schema validation for the file's `kind`, then:
+### 6.2 Lint: governance files
+
+Schema validation for the file's `kind`, then:
 
 | Code | Meaning |
 |---|---|
-| `unknown-domain` | A glossary or product names a domain with no domain file. |
 | `unknown-related-term` | A term's `relatedTerms` names a term not in its glossary. |
-| `unknown-product-contract` | An output port's `contractId` isn't the `id` of any contract. |
 | `missing-product-owner` | A product has no `team.name`. |
 
-Every rule is a check on one file plus the files it references. There are
-no "keep N contracts consistent with each other" rules: each fact has one
-home, so there's nothing to conflict.
+### 6.3 Compile: references between files
+
+| Code | In | Meaning |
+|---|---|---|
+| `source-contract-not-found` | contract | `sources[].contract` doesn't resolve to a file. |
+| `contract-naming-mismatch` | contract | The file isn't at `contracts/<medallionLayer>/<domain>/<name>.yaml`. |
+| `relationship-target-not-found` | contract | A relationship's `to` doesn't resolve to a contract file, schema object and column. |
+| `relationship-target-not-unique` | contract | A relationship's target is neither unique nor the target's primary key. |
+| `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. |
+| `unknown-business-term` | contract | `businessName` isn't in the domain's glossary. The message includes a ready-to-paste term stub. |
+| `unknown-product-contract` | product | An output port's `contractId` isn't the `id` of any contract. |
+
+Every rule checks one file, or one file against the files it references.
+There are no "keep N contracts consistent with each other" rules: each
+fact has one home, so there's nothing to conflict.
 
 Not yet checked: that the columns the transforms produce match the
 contract's own `schema` (names/count).
@@ -411,8 +428,10 @@ records.
 | `sourceHash` | SHA-256 over every input file: which exact inputs this manifest describes. |
 
 It's derived only: never edit it by hand. Don't commit it either (`target/`
-is gitignored), since it changes on almost every contract edit. Run `lint`
-first; `compile` assumes valid inputs. A consumer handed a prebuilt
+is gitignored), since it changes on almost every contract edit. Compiling
+checks first that every reference between files resolves (Section 6.3) and
+writes nothing if one doesn't. Run `lint` first: compile doesn't re-check
+each file's shape. A consumer handed a prebuilt
 manifest checks `sourceHash` against the repo (`fluvv.manifest.check_fresh`)
 and refuses a stale one.
 

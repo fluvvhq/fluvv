@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import jsonschema
 import pytest
 import sqlglot
+from typer.testing import CliRunner
 
-from fluvv import lineage, manifest
+from fluvv import cli, lineage, manifest
 from fluvv.contract import UnresolvableSourceError, find_repo_root, load_extension, resolve_extension
 from fluvv.lint import lint
 from fluvv.models import FluvvExtension
 from fluvv.schema import SCHEMAS_DIR
-from fluvv.semantic import check_source_locations, check_transforms
+from fluvv.semantic import ProjectCheckError, check_source_locations, check_transforms
 
 # A copy of the sales example project, so these tests pass from a checkout
 # of this package alone.
@@ -119,7 +121,7 @@ def test_implicit_combine_needs_exactly_one_source():
         lineage.combine_sql([_source("a"), _source("b")], None)
 
 
-# --- lint over the repo -----------------------------------------------------------
+# --- lint: one file at a time --------------------------------------------------------
 
 
 def test_new_multi_source_contract_and_governance_files_lint_clean():
@@ -133,22 +135,72 @@ def test_new_multi_source_contract_and_governance_files_lint_clean():
         assert result.passed, result.report()
 
 
-def test_unknown_business_name_fails_lint_with_a_stub(tmp_path):
-    contract = (EXAMPLE / "contracts/gold/sales/employees.yaml").read_text()
-    path = tmp_path / "employees.yaml"
-    path.write_text(contract.replace("businessName: JobTitle", "businessName: JobRole"))
-    result = lint(path, repo_root=EXAMPLE)
-    assert not result.passed
-    assert [i.code for i in result.semantic_issues] == ["unknown-business-term"]
-    assert "- name: JobRole" in result.report()
+def test_lint_judges_a_file_on_its_own_outside_any_repository(tmp_path):
+    """No contracts/ or governance/ around the files: lint needs neither.
+    An unknown glossary term isn't lint's to find; compile reports it."""
+    contract = tmp_path / "employees.yaml"
+    contract.write_text((EXAMPLE / "contracts/gold/sales/employees.yaml").read_text().replace("JobTitle", "JobRole"))
+    glossary = tmp_path / "sales.yaml"
+    shutil.copy(EXAMPLE / "governance/glossaries/sales.yaml", glossary)
+    assert lint(contract).passed, lint(contract).report()
+    result = CliRunner().invoke(cli.build_app(), ["lint", str(contract), str(glossary)])
+    assert result.exit_code == 0, result.output
+    assert result.output.count("PASSED") == 2
 
 
 def test_governance_file_schema_errors_are_reported(tmp_path):
     path = tmp_path / "domain.yaml"
     path.write_text("apiVersion: fluvv/v1\nkind: Domain\nname: x\n")
-    result = lint(path, repo_root=EXAMPLE)
+    result = lint(path)
     assert not result.passed
     assert any("owner" in e for e in result.schema_errors)
+
+
+# --- compile: the repository as a whole ---------------------------------------------
+
+
+def _broken_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    shutil.copytree(EXAMPLE, repo)
+    edits = {
+        "contracts/gold/sales/employees.yaml": ("businessName: JobTitle", "businessName: JobRole"),
+        "contracts/silver/sales/cars.yaml": ("contract: contracts/bronze/sales/cars.yaml", "contract: contracts/bronze/sales/nope.yaml"),
+        "governance/products/sales_reporting.odps.yaml": ("contractId: gold.sales.cars", "contractId: gold.sales.gone"),
+    }
+    for rel, (old, new) in edits.items():
+        path = repo / rel
+        path.write_text(path.read_text().replace(old, new))
+    return repo
+
+
+def test_compile_lists_every_broken_reference_and_writes_nothing(tmp_path, monkeypatch):
+    repo = _broken_repo(tmp_path)
+    with pytest.raises(ProjectCheckError) as excinfo:
+        manifest.compile_manifest(repo)
+    assert sorted((i.path, i.code) for i in excinfo.value.issues) == [
+        ("contracts/gold/sales/employees.yaml", "unknown-business-term"),
+        ("contracts/silver/sales/cars.yaml", "source-contract-not-found"),
+        ("governance/products/sales_reporting.odps.yaml", "unknown-product-contract"),
+    ]
+    assert "  - name: JobRole" in excinfo.value.report()  # the ready-to-paste stub
+
+    monkeypatch.chdir(repo)
+    result = CliRunner().invoke(cli.build_app(), ["compile"])
+    assert result.exit_code == 1
+    assert "[unknown-business-term]" in result.output
+    assert not (repo / "target").exists()
+
+
+def test_compile_checks_each_contract_sits_where_its_id_says(tmp_path):
+    repo = tmp_path / "repo"
+    shutil.copytree(EXAMPLE, repo)
+    (repo / "contracts/bronze/sales/cars.yaml").rename(repo / "contracts/bronze/sales/vehicles.yaml")
+    for rel in ("contracts/silver/sales/cars.yaml",):
+        path = repo / rel
+        path.write_text(path.read_text().replace("contracts/bronze/sales/cars.yaml", "contracts/bronze/sales/vehicles.yaml"))
+    with pytest.raises(ProjectCheckError) as excinfo:
+        manifest.compile_manifest(repo)
+    assert [(i.path, i.code) for i in excinfo.value.issues] == [("contracts/bronze/sales/vehicles.yaml", "contract-naming-mismatch")]
 
 
 # --- manifest -----------------------------------------------------------------------

@@ -64,11 +64,14 @@ fluvv compile                                         # everything -> target/man
 fluvv export contracts/silver/sales/cars.yaml         # Spark schema + resolved ingestion config
 ```
 
-`lint` checks each file against its JSON Schema, then what a schema can't
-express: transform SQL that reads only declared sources, glossary terms
-and domains that exist, relationships that resolve. `compile` writes one
-manifest with every contract, the governance around it, and table- and
-column-level lineage derived from the transforms.
+`lint` checks each file on its own: its JSON Schema, then what a schema
+can't express, such as transform SQL that reads only declared sources. It
+needs nothing but the file, so it runs anywhere. `compile` checks that the
+repository's files fit together (domains, glossary terms, upstream
+contracts and relationships all resolve) and then writes one manifest
+with every contract, the governance around it, and table- and
+column-level lineage derived from the transforms. If a reference is
+broken, it lists every one and writes nothing.
 
 ## In Python
 

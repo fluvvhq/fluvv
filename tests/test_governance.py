@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from fluvv import governance
+from fluvv.semantic import run_project_checks
 
 # A copy of the sales example project, so these tests pass from a checkout
 # of this package alone.
@@ -41,13 +42,14 @@ def _gov(terms: dict[str, list[str]] | None = None, domains=("d",)) -> governanc
 
 
 def test_repo_contracts_and_governance_files_have_no_issues(sales_docs, gov):
-    contract_ids = {d["id"] for d in sales_docs}
     for doc in sales_docs:
         assert governance.contract_issues(doc) == []
-        assert governance.contract_reference_issues(doc, gov) == []
-    assert governance.glossary_issues(gov.glossaries["sales"], gov) == []
+        assert governance.id_issues(doc) == []
+        assert governance.relationship_shape_issues(doc) == []
+    assert governance.glossary_issues(gov.glossaries["sales"]) == []
     for product in gov.products.values():
-        assert governance.data_product_issues(product, gov, contract_ids) == []
+        assert governance.data_product_issues(product) == []
+    assert run_project_checks(EXAMPLE) == []
 
 
 def test_glossary_definitions_come_from_the_glossary_file_with_derived_synonyms(sales_docs, gov):
@@ -76,8 +78,8 @@ def test_unknown_business_term_suggests_a_stub():
 
 def test_contract_must_reference_a_known_domain_and_not_define_its_product():
     doc = {**_doc("gold", []), "domain": "nowhere", "dataProduct": "p"}
-    codes = sorted(i.code for i in governance.contract_reference_issues(doc, _gov()))
-    assert codes == ["data-product-in-contract", "unknown-domain"]
+    assert [i.code for i in governance.contract_reference_issues(doc, _gov())] == ["unknown-domain"]
+    assert [i.code for i in governance.contract_issues(doc)] == ["data-product-in-contract"]  # the file alone shows it
 
 
 def test_contract_issues_flag_bad_classification_retention_and_leftover_related_terms():
@@ -92,14 +94,16 @@ def test_contract_issues_flag_bad_classification_retention_and_leftover_related_
 
 def test_glossary_related_terms_must_exist_in_the_glossary():
     gov = _gov({"Thing": ["Nope"], "Other": []})
-    issues = governance.glossary_issues(gov.glossaries["d"], gov)
+    issues = governance.glossary_issues(gov.glossaries["d"])
     assert [(i.code, "Nope" in i.message) for i in issues] == [("unknown-related-term", True)]
+    assert governance.glossary_reference_issues(gov.glossaries["d"], _gov(domains=())) != []  # its domain is a reference
 
 
 def test_data_product_ports_must_name_real_contracts():
     product = governance.DataProduct("p", "d", {}, "team-a", [], ["gold.d.t", "gold.d.gone"])
-    issues = governance.data_product_issues(product, _gov(), {"gold.d.t"})
+    issues = governance.data_product_reference_issues(product, _gov(), {"gold.d.t"})
     assert [i.code for i in issues] == ["unknown-product-contract"]
+    assert governance.data_product_issues(product) == []
 
 
 def test_domain_owner_and_experts_come_from_the_domain_file(gov):

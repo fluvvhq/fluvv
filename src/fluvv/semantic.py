@@ -1,14 +1,24 @@
-"""Checks that JSON Schema can't express, per docs/fluvv/SPEC.md Section 6:
-- sources[].contract paths resolve to a file on disk, and a source states
-  `location`/`format` only when it has no contract to derive them from.
+"""Checks that JSON Schema can't express, per docs/fluvv/SPEC.md Section 6,
+in two groups.
+
+On one file alone (`fluvv lint`, needs no repository):
+- a source states `location`/`format` only when it has no contract to
+  derive them from.
 - each per-source transform references only its own source; the
   contract-level transform references only declared sources, and exists
   whenever there's more than one source.
-- governance: the contract's own fields are valid (classification,
-  retention, freshness, the v3.1.0 team object), its references to shared
-  entities (domain, glossary terms) resolve to the governance files, its
-  id and path agree with its `medallionLayer` and `domain`, and its
-  relationships point at existing, unique columns (fluvv.governance).
+- the contract's own fields are valid (classification, retention,
+  freshness, the v3.1.0 team object), its id agrees with its
+  `medallionLayer` and `domain`, its relationships start from its own
+  columns, and it doesn't define shared things; a glossary's related terms
+  are its own, a data product has an owner (fluvv.governance).
+
+On the repository as a whole (`fluvv compile`):
+- sources[].contract paths resolve to a contract file, each contract sits
+  at the path its id names, and relationships point at existing, unique
+  columns.
+- references to shared entities resolve: domains, glossary terms, and
+  the contracts a data product's output ports name.
 """
 
 from __future__ import annotations
@@ -20,7 +30,10 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
+from pydantic import ValidationError
+
 from fluvv import governance
+from fluvv.contract import MissingCustomPropertyError, parse_extension
 from fluvv.models import FluvvExtension
 
 
@@ -28,6 +41,30 @@ from fluvv.models import FluvvExtension
 class SemanticIssue:
     code: str
     message: str
+
+
+@dataclass(frozen=True)
+class ProjectIssue:
+    path: str
+    """Repo-relative path of the file the issue is in."""
+    code: str
+    message: str
+
+
+class ProjectCheckError(ValueError):
+    """The repository's files don't fit together; raised by
+    `fluvv.manifest.compile_manifest` instead of compiling them."""
+
+    def __init__(self, issues: list[ProjectIssue]):
+        self.issues = issues
+        super().__init__(self.report())
+
+    def report(self) -> str:
+        lines = [f"{len(self.issues)} problem(s) between files; nothing compiled:"]
+        for issue in self.issues:
+            message = issue.message.replace("\n", "\n    ")
+            lines.append(f"  {issue.path}: [{issue.code}] {message}")
+        return "\n".join(lines)
 
 
 def check_source_contracts_exist(
@@ -119,47 +156,76 @@ def check_transforms(extension: FluvvExtension) -> list[SemanticIssue]:
     return issues
 
 
-def _path_below_contracts(contract_path: Path | None, repo_root: Path) -> tuple[str, ...] | None:
-    if contract_path is None:
-        return None
-    contracts_dir = (repo_root / "contracts").resolve()
-    resolved = contract_path.resolve()
-    return resolved.relative_to(contracts_dir).parts if resolved.is_relative_to(contracts_dir) else None
-
-
-def check_governance(doc: dict[str, Any], repo_root: Path, contract_path: Path | None = None) -> list[SemanticIssue]:
-    gov = governance.load_governance(repo_root)
+def check_contract_fields(doc: dict[str, Any]) -> list[SemanticIssue]:
+    """The contract's governance fields, judged on the contract alone."""
     return [
         SemanticIssue(issue.code, issue.message)
         for issue in (
             *governance.contract_issues(doc),
-            *governance.naming_issues(doc, _path_below_contracts(contract_path, repo_root)),
-            *governance.relationship_issues(doc, repo_root),
-            *governance.contract_reference_issues(doc, gov),
+            *governance.id_issues(doc),
+            *governance.relationship_shape_issues(doc),
         )
     ]
 
 
-def run_semantic_checks(
-    extension: FluvvExtension, repo_root: Path, doc: dict[str, Any] | None = None, contract_path: Path | None = None
-) -> list[SemanticIssue]:
+def run_semantic_checks(extension: FluvvExtension, doc: dict[str, Any] | None = None) -> list[SemanticIssue]:
+    """Everything lint checks on a contract beyond its schema. Needs no
+    repository: what the contract refers to is checked by
+    `run_project_checks`."""
     return [
-        *check_source_contracts_exist(extension, repo_root),
         *check_source_locations(extension),
         *check_transforms(extension),
-        *(check_governance(doc, repo_root, contract_path) if doc is not None else []),
+        *(check_contract_fields(doc) if doc is not None else []),
     ]
 
 
-def run_governance_file_checks(raw: dict[str, Any], repo_root: Path) -> list[SemanticIssue]:
-    """Reference checks for one (schema-valid) governance file."""
-    gov = governance.load_governance(repo_root)
+def run_governance_file_checks(raw: dict[str, Any]) -> list[SemanticIssue]:
+    """What lint checks on one (schema-valid) governance file beyond its
+    schema, on the file alone."""
     kind = raw.get("kind")
     if kind == governance.GLOSSARY_KIND:
-        issues = governance.glossary_issues(governance.parse_glossary(raw), gov)
+        issues = governance.glossary_issues(governance.parse_glossary(raw))
     elif kind == governance.DATA_PRODUCT_KIND:
-        contract_ids = {d["id"] for d in governance.load_contracts(repo_root).values()}
-        issues = governance.data_product_issues(governance.parse_data_product(raw), gov, contract_ids)
+        issues = governance.data_product_issues(governance.parse_data_product(raw))
     else:
         issues = []
     return [SemanticIssue(issue.code, issue.message) for issue in issues]
+
+
+def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
+    """Every reference between the repository's files. Assumes each file
+    passes lint on its own: a contract whose extension doesn't parse is
+    skipped for the checks that need it."""
+    repo_root = Path(repo_root).resolve()
+    contracts_dir = repo_root / "contracts"
+    gov = governance.load_governance(repo_root)
+    docs_by_path = governance.load_contracts(repo_root)
+    contract_ids = {doc.get("id") for doc in docs_by_path.values()}
+
+    issues: list[ProjectIssue] = []
+    for path, doc in docs_by_path.items():
+        found: list[SemanticIssue] = []
+        try:
+            found += check_source_contracts_exist(parse_extension(doc, path), repo_root)
+        except (MissingCustomPropertyError, ValidationError):
+            pass
+        found += [
+            SemanticIssue(issue.code, issue.message)
+            for issue in (
+                *governance.contract_path_issues(doc, path.relative_to(contracts_dir).parts),
+                *governance.relationship_target_issues(doc, repo_root),
+                *governance.contract_reference_issues(doc, gov),
+            )
+        ]
+        issues += [ProjectIssue(path.relative_to(repo_root).as_posix(), i.code, i.message) for i in found]
+
+    for path, raw in governance.load_governance_documents(repo_root).items():
+        kind = raw.get("kind")
+        if kind == governance.GLOSSARY_KIND:
+            found_gov = governance.glossary_reference_issues(governance.parse_glossary(raw), gov)
+        elif kind == governance.DATA_PRODUCT_KIND:
+            found_gov = governance.data_product_reference_issues(governance.parse_data_product(raw), gov, contract_ids)
+        else:
+            found_gov = []
+        issues += [ProjectIssue(path.relative_to(repo_root).as_posix(), i.code, i.message) for i in found_gov]
+    return issues

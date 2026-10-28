@@ -10,7 +10,9 @@ fluvv/schemas/manifest.schema.json. See docs/fluvv/SPEC.md Section 7.
 
 Generated, never edited, and not committed: `fluvv compile` writes it
 (default `target/manifest.json`, gitignored). `sourceHash` identifies the
-exact set of input files it was compiled from.
+exact set of input files it was compiled from. Compiling checks first that
+the files fit together (`fluvv.semantic.run_project_checks`) and refuses
+to describe a repository whose references don't resolve.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Any
 
 from fluvv import governance, lineage
 from fluvv.contract import get_custom_property, parse_extension, resolve_extension
+from fluvv.semantic import ProjectCheckError, run_project_checks
 
 MANIFEST_VERSION = "2"
 DEFAULT_PATH = Path("target") / "manifest.json"
@@ -95,7 +98,8 @@ def _ingestion(doc: dict[str, Any], path: Path, repo_root: Path, id_by_path: dic
 
 def _relationships(doc: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]:
     """ODCS v3.1.0 relationships, resolved to target contract ids and
-    column names. Unresolvable ones are lint's to report, so skipped here."""
+    column names. Unresolvable ones are skipped here: compile_manifest has
+    already refused them (`relationship-target-not-found`)."""
     resolved = []
     for from_columns, to_refs in governance.relationships(doc):
         try:
@@ -111,7 +115,11 @@ def _relationships(doc: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]
 
 
 def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
+    """Raises ProjectCheckError, listing every broken reference, if the
+    repository's files don't fit together."""
     repo_root = Path(repo_root).resolve()
+    if issues := run_project_checks(repo_root):
+        raise ProjectCheckError(issues)
     docs_by_path = governance.load_contracts(repo_root)
     docs = list(docs_by_path.values())
     gov = governance.load_governance(repo_root)
@@ -206,8 +214,9 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
 def write_manifest(repo_root: Path | str = ".", out: Path | str | None = None) -> Path:
     repo_root = Path(repo_root)
     out = Path(out) if out is not None else repo_root / DEFAULT_PATH
+    compiled = compile_manifest(repo_root)  # first: a failed compile leaves nothing behind
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(compile_manifest(repo_root), indent=2, ensure_ascii=False) + "\n")
+    out.write_text(json.dumps(compiled, indent=2, ensure_ascii=False) + "\n")
     return out
 
 
