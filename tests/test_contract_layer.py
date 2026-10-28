@@ -148,6 +148,22 @@ def test_lint_judges_a_file_on_its_own_outside_any_repository(tmp_path):
     assert result.output.count("PASSED") == 2
 
 
+def test_lint_takes_folders_and_defaults_to_the_repository_here(tmp_path, monkeypatch):
+    run = lambda *args: CliRunner().invoke(cli.build_app(), ["lint", *args])
+    monkeypatch.chdir(EXAMPLE)
+    every_file = run()
+    assert every_file.exit_code == 0, every_file.output
+    assert every_file.output.count("PASSED") == 13  # 10 contracts, 3 governance files
+    assert run(".").output == every_file.output
+    assert run("contracts/silver").output.count("PASSED") == 3
+
+    (tmp_path / "empty").mkdir()
+    empty = run(str(tmp_path / "empty"))
+    assert empty.exit_code == 1 and "no .yaml files to lint" in empty.output
+    missing = run(str(tmp_path / "nope"))
+    assert missing.exit_code == 2 and isinstance(missing.exception, SystemExit)  # a usage error, not a traceback
+
+
 def test_export_outside_a_repository_says_so_in_one_line(tmp_path):
     contract = tmp_path / "cars.yaml"
     shutil.copy(EXAMPLE / "contracts/silver/sales/cars.yaml", contract)

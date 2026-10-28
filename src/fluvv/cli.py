@@ -23,16 +23,44 @@ PLUGIN_GROUP = "fluvv.commands"
 ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-openmetadata")
 
 
+def _yaml_files(path: Path) -> list[Path]:
+    """What linting `path` means. A file is itself. A repository root (it
+    holds contracts/ or governance/) is the YAML in those two folders, so
+    `fluvv lint .` lints the project and nothing else in it. Any other
+    folder is every YAML file below it, skipping hidden folders like .venv.
+    The generated files under contracts/ are .py and .json, so they're
+    never picked up."""
+    if path.is_file():
+        return [path]
+    roots = [path / top for top in ("contracts", "governance") if (path / top).is_dir()] or [path]
+    return sorted(
+        found
+        for root in roots
+        for found in root.rglob("*.yaml")
+        if not any(part.startswith(".") for part in found.relative_to(root).parts[:-1])
+    )
+
+
 def lint_command(
-    contract_paths: list[Path] = typer.Argument(..., help="Fluvv contracts and/or governance files (Domain, Glossary, ODPS DataProduct)."),
+    paths: list[Path] = typer.Argument(
+        None,
+        exists=True,
+        help="Contracts, governance files (Domain, Glossary, ODPS DataProduct), or folders of them. "
+        "Default: the repository in the current directory.",
+    ),
 ) -> None:
     """Lint contracts and governance files, each on its own. Exits non-zero
     if any fail. References between files are checked by `compile`."""
     all_passed = True
-    for contract_path in contract_paths:
-        result = lint(contract_path)
-        typer.echo(result.report())
-        all_passed &= result.passed
+    for path in paths or [Path(".")]:
+        files = _yaml_files(path)
+        if not files:
+            typer.echo(f"{path}: no .yaml files to lint", err=True)
+            all_passed = False
+        for contract_path in files:
+            result = lint(contract_path)
+            typer.echo(result.report())
+            all_passed &= result.passed
     raise typer.Exit(code=0 if all_passed else 1)
 
 

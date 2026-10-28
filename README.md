@@ -59,9 +59,9 @@ customProperties:
 ## Lint, compile, export
 
 ```bash
-fluvv lint contracts/*/*/*.yaml governance/*/*.yaml   # exits non-zero on any failure
-fluvv compile                                         # everything -> target/manifest.json
-fluvv export contracts/silver/sales/cars.yaml         # Spark schema + resolved ingestion config
+fluvv lint                                     # every contract and governance file; or name files/folders
+fluvv compile                                  # references between files, then -> target/manifest.json
+fluvv export contracts/silver/sales/cars.yaml  # Spark schema + resolved ingestion config
 ```
 
 `lint` checks each file on its own: its JSON Schema, then what a schema

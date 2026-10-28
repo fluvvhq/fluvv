@@ -344,10 +344,12 @@ validated against the ODPS schema.
 
 Checking happens in two steps, each with its own question:
 
-- `python -m fluvv lint <file>...`: **is each file right on its own?** It
+- `python -m fluvv lint [<path>...]`: **is each file right on its own?** It
   takes contracts and governance files alike (dispatched on `kind`), needs
   nothing but the files it's given (no repository around them), and exits
-  non-zero if any fail.
+  non-zero if any fail. A folder means the `.yaml` files in it; a
+  repository root means those under its `contracts/` and `governance/`; no
+  path means the repository in the current directory.
 - `python -m fluvv compile`: **do the repository's files fit together?**
   Run from the repository root, it checks every reference between files
   before writing the manifest (Section 7). If any doesn't resolve, it lists
