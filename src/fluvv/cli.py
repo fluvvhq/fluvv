@@ -6,6 +6,7 @@ from typing import Callable
 
 import typer
 
+from fluvv.contract import RepoRootNotFoundError
 from fluvv.export import export_artifacts
 from fluvv.lint import lint
 from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
@@ -38,9 +39,15 @@ def lint_command(
 def export_command(
     contract_paths: list[Path] = typer.Argument(..., help="One or more Fluvv contract YAML files."),
 ) -> None:
-    """Export the Spark schema and ingestion_config JSON for one or more contracts."""
+    """Export the Spark schema and ingestion_config JSON for one or more
+    contracts. They're written under the repository's contracts/, so each
+    contract must be inside one."""
     for contract_path in contract_paths:
-        result = export_artifacts(contract_path)
+        try:
+            result = export_artifacts(contract_path)
+        except RepoRootNotFoundError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1)
         typer.echo(f"{contract_path}:")
         typer.echo(f"  {result.spark_schema_path}")
         typer.echo(f"  {result.ingestion_config_path}")

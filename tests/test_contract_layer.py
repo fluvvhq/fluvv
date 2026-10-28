@@ -148,6 +148,14 @@ def test_lint_judges_a_file_on_its_own_outside_any_repository(tmp_path):
     assert result.output.count("PASSED") == 2
 
 
+def test_export_outside_a_repository_says_so_in_one_line(tmp_path):
+    contract = tmp_path / "cars.yaml"
+    shutil.copy(EXAMPLE / "contracts/silver/sales/cars.yaml", contract)
+    result = CliRunner().invoke(cli.build_app(), ["export", str(contract)])
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)  # no traceback
+    assert "isn't inside a Fluvv repository" in result.output
+
+
 def test_governance_file_schema_errors_are_reported(tmp_path):
     path = tmp_path / "domain.yaml"
     path.write_text("apiVersion: fluvv/v1\nkind: Domain\nname: x\n")

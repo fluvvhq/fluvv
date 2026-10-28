@@ -31,6 +31,12 @@ class UnresolvableSourceError(ValueError):
     pass
 
 
+class RepoRootNotFoundError(FileNotFoundError):
+    """A file outside any Fluvv repository was given to something that
+    needs the files around it: resolving upstream sources, or writing the
+    generated files under `contracts/`. Lint never raises it."""
+
+
 def load_odcs_document(contract_path: Path) -> dict[str, Any]:
     return yaml.safe_load(Path(contract_path).read_text())
 
@@ -52,9 +58,9 @@ def find_repo_root(start: Path) -> Path:
     for candidate in (path, *path.parents):
         if (candidate / "contracts").is_dir() or (candidate / "governance").is_dir():
             return candidate
-    raise FileNotFoundError(
-        "could not locate repo root: no parent of "
-        f"'{start}' holds a contracts/ or governance/ directory"
+    raise RepoRootNotFoundError(
+        f"{start} isn't inside a Fluvv repository: no folder above it holds a "
+        "contracts/ or governance/ directory (SPEC.md Section 1)"
     )
 
 
