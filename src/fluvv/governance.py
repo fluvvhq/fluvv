@@ -502,16 +502,22 @@ def relationship_target_issues(doc: dict[str, Any], repo_root: Path) -> list[Gov
     return issues
 
 
+def unknown_domain(domain: str) -> GovernanceIssue:
+    """Worded the same for a contract, glossary or product, so a missing
+    domain file is reported once with every file that names it."""
+    return GovernanceIssue(
+        "unknown-domain",
+        f"domain '{domain}' has no domain file; add {GOVERNANCE_DIR}/domains/{domain}.yaml (kind: {DOMAIN_KIND})",
+    )
+
+
 def contract_reference_issues(doc: dict[str, Any], gov: Governance) -> list[GovernanceIssue]:
     """The contract's references to shared entities must resolve. (That it
     doesn't define them itself is `contract_issues`.)"""
     domain = doc.get("domain")
     issues = []
     if domain not in gov.domains:
-        issues.append(GovernanceIssue(
-            "unknown-domain",
-            f"domain '{domain}' has no domain file; add {GOVERNANCE_DIR}/domains/{domain}.yaml (kind: {DOMAIN_KIND})",
-        ))
+        issues.append(unknown_domain(domain))
     terms = gov.glossaries[domain].terms if domain in gov.glossaries else {}
     for prop in columns(doc):
         name = prop.get("businessName")
@@ -540,7 +546,7 @@ def glossary_issues(glossary_: Glossary) -> list[GovernanceIssue]:
 def glossary_reference_issues(glossary_: Glossary, gov: Governance) -> list[GovernanceIssue]:
     """Checks that need the rest of the repository."""
     if glossary_.domain not in gov.domains:
-        return [GovernanceIssue("unknown-domain", f"glossary is for domain '{glossary_.domain}', which has no domain file")]
+        return [unknown_domain(glossary_.domain)]
     return []
 
 
@@ -555,7 +561,7 @@ def data_product_reference_issues(product: DataProduct, gov: Governance, contrac
     """Checks that need the rest of the repository."""
     issues = []
     if product.domain not in gov.domains:
-        issues.append(GovernanceIssue("unknown-domain", f"data product '{product.name}': domain '{product.domain}' has no domain file"))
+        issues.append(unknown_domain(product.domain))
     for contract_id in product.contract_ids:
         if contract_id not in contract_ids:
             issues.append(GovernanceIssue(

@@ -13,7 +13,8 @@ On one file alone (`fluvv lint`, needs no repository):
   columns, and it doesn't define shared things; a glossary's related terms
   are its own, a data product has an owner (fluvv.governance).
 
-On the repository as a whole (`fluvv compile`):
+On the repository as a whole (`fluvv compile`), once every file loads and
+passes lint's structural checks (YAML, Fluvv customProperties, id):
 - sources[].contract paths resolve to a contract file, each contract sits
   at the path its id names, and relationships point at existing, unique
   columns.
@@ -30,11 +31,13 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
+import yaml
 from pydantic import ValidationError
 
 from fluvv import governance
-from fluvv.contract import MissingCustomPropertyError, parse_extension
+from fluvv.contract import MissingCustomPropertyError, load_odcs_document, parse_extension, yaml_problem
 from fluvv.models import FluvvExtension
+from fluvv.schema import GOVERNANCE_KINDS, custom_property_errors, odcs_errors, validate_governance_document
 
 
 @dataclass(frozen=True)
@@ -60,10 +63,20 @@ class ProjectCheckError(ValueError):
         super().__init__(self.report())
 
     def report(self) -> str:
-        lines = [f"{len(self.issues)} problem(s) between files; nothing compiled:"]
+        """One entry per distinct problem: the same code and message in
+        several files (one missing domain file named by every contract) is
+        reported once, with the files it's in."""
+        groups: dict[tuple[str, str], list[str]] = {}
         for issue in self.issues:
-            message = issue.message.replace("\n", "\n    ")
-            lines.append(f"  {issue.path}: [{issue.code}] {message}")
+            groups.setdefault((issue.code, issue.message), []).append(issue.path)
+        lines = [f"{len(groups)} problem(s); nothing compiled:"]
+        for (code, message), paths in groups.items():
+            message = message.replace("\n", "\n    ")
+            if len(paths) == 1:
+                lines.append(f"  {paths[0]}: [{code}] {message}")
+            else:
+                lines.append(f"  [{code}] {message}")
+                lines.append(f"    in {len(paths)} files: {', '.join(paths)}")
         return "\n".join(lines)
 
 
@@ -192,11 +205,67 @@ def run_governance_file_checks(raw: dict[str, Any]) -> list[SemanticIssue]:
     return [SemanticIssue(issue.code, issue.message) for issue in issues]
 
 
+def _contract_problem(doc: Any, path: Path) -> str | None:
+    """The first thing lint would fail this contract on that compile depends
+    on: its ODCS structure, Fluvv customProperties and id. The rest of lint
+    (datacontract-cli's full check, the transform SQL) is left to lint."""
+    if not isinstance(doc, dict):
+        return "the file is empty or isn't a YAML mapping"
+    if errors := odcs_errors(doc):
+        return errors[0]
+    if errors := custom_property_errors(doc):
+        return errors[0]
+    try:
+        parse_extension(doc, path)
+    except (MissingCustomPropertyError, ValidationError) as exc:
+        return str(exc).splitlines()[0]
+    if issues := governance.id_issues(doc):
+        return issues[0].message
+    return None
+
+
+def _governance_file_problem(raw: Any) -> str | None:
+    if not isinstance(raw, dict):
+        return "the file is empty or isn't a YAML mapping"
+    if raw.get("kind") not in GOVERNANCE_KINDS:
+        return f"kind {raw.get('kind')!r} isn't one of {list(GOVERNANCE_KINDS)}"
+    if errors := validate_governance_document(raw):
+        return f"{'/'.join(map(str, errors[0].absolute_path)) or '(root)'}: {errors[0].message}"
+    return None
+
+
+def unfit_files(repo_root: Path) -> list[ProjectIssue]:
+    """Files compile can't judge references in: ones that don't load, or
+    fail lint's structural checks. Each is reported with its first problem."""
+    issues = []
+    for pattern, first_problem in (
+        ("contracts/**/*.yaml", _contract_problem),
+        (f"{governance.GOVERNANCE_DIR}/**/*.yaml", lambda raw, _path: _governance_file_problem(raw)),
+    ):
+        for path in sorted(repo_root.glob(pattern)):
+            rel = path.relative_to(repo_root).as_posix()
+            try:
+                problem = first_problem(load_odcs_document(path), path)
+            except yaml.YAMLError as exc:
+                problem = yaml_problem(exc)
+            if problem:
+                issues.append(ProjectIssue(rel, "fails-lint", f"doesn't pass lint ({problem}); run `fluvv lint {rel}`"))
+    return issues
+
+
 def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
-    """Every reference between the repository's files. Assumes each file
-    passes lint on its own: a contract whose extension doesn't parse is
-    skipped for the checks that need it."""
+    """Every reference between the repository's files. Stops at files that
+    don't pass lint's structural checks: references into a broken file
+    can't be judged, and checking around it would report every column of a
+    broken glossary as an unknown term."""
     repo_root = Path(repo_root).resolve()
+    if not any(repo_root.glob("contracts/**/*.yaml")) and not any(repo_root.glob(f"{governance.GOVERNANCE_DIR}/**/*.yaml")):
+        return [ProjectIssue(
+            ".", "not-a-repository",
+            f"no contract or governance files here ({repo_root}); run compile from the repository root",
+        )]
+    if unfit := unfit_files(repo_root):
+        return unfit
     contracts_dir = repo_root / "contracts"
     gov = governance.load_governance(repo_root)
     docs_by_path = governance.load_contracts(repo_root)

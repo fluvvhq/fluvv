@@ -355,7 +355,14 @@ Checking happens in two steps, each with its own question:
   before writing the manifest (Section 7). If any doesn't resolve, it lists
   them all, exits non-zero and writes nothing.
 
-Run `lint` first: `compile` doesn't re-check each file's shape.
+Compile first makes sure it can read every file: each must load as YAML
+and pass lint's structural checks (the ODCS JSON Schema, the Fluvv
+`customProperties`, the `id`). A file that doesn't is reported as
+`fails-lint` with its first problem, and compile checks no references
+until it's fixed, since references into a broken file can't be judged.
+Run `lint` for the full check of each file. A problem shared by several
+files, such as one missing domain file, is reported once with every file
+it's in.
 
 ### 6.1 Lint: contracts
 
@@ -402,6 +409,8 @@ Schema validation for the file's `kind`, then:
 | `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. |
 | `unknown-business-term` | contract | `businessName` isn't in the domain's glossary. The message includes a ready-to-paste term stub. |
 | `unknown-product-contract` | product | An output port's `contractId` isn't the `id` of any contract. |
+| `fails-lint` | any file | The file doesn't load as YAML or fails lint's structural checks; no references are checked until it's fixed. |
+| `not-a-repository` | the folder | There are no contract or governance files under the current directory. |
 
 Every rule checks one file, or one file against the files it references.
 There are no "keep N contracts consistent with each other" rules: each
@@ -432,8 +441,7 @@ records.
 It's derived only: never edit it by hand. Don't commit it either (`target/`
 is gitignored), since it changes on almost every contract edit. Compiling
 checks first that every reference between files resolves (Section 6.3) and
-writes nothing if one doesn't. Run `lint` first: compile doesn't re-check
-each file's shape. A consumer handed a prebuilt
+writes nothing if one doesn't. A consumer handed a prebuilt
 manifest checks `sourceHash` against the repo (`fluvv.manifest.check_fresh`)
 and refuses a stale one.
 

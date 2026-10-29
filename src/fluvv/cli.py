@@ -86,8 +86,8 @@ def compile_command(
 ) -> None:
     """Compile every contract and governance file under the current
     directory (the repo root) into one manifest JSON, after checking that
-    their references resolve. Exits non-zero, writing nothing, if any
-    don't. Run `lint` first: compile doesn't re-check each file's shape."""
+    each file can be read and their references resolve. Exits non-zero,
+    writing nothing, if not. `lint` checks each file in full."""
     try:
         typer.echo(write_manifest(Path("."), out))
     except ProjectCheckError as exc:

@@ -41,6 +41,14 @@ def load_odcs_document(contract_path: Path) -> dict[str, Any]:
     return yaml.safe_load(Path(contract_path).read_text())
 
 
+def yaml_problem(exc: yaml.YAMLError) -> str:
+    """A YAML syntax error in one line, for a report rather than a traceback."""
+    mark, problem = getattr(exc, "problem_mark", None), getattr(exc, "problem", None)
+    if mark is not None and problem:
+        return f"invalid YAML at line {mark.line + 1}: {problem}"
+    return f"invalid YAML: {str(exc).splitlines()[0]}"
+
+
 def find_repo_root(start: Path) -> Path:
     """The repository root for `start` (SPEC.md Section 1), recognised by
     the layout, not by fluvv's own files: a contracts repo doesn't

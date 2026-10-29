@@ -13,18 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml
 from datacontract.data_contract import DataContract
 from datacontract.model.run import ResultEnum
 
-from fluvv.contract import (
-    FLUVV_CUSTOM_PROPERTIES,
-    OPTIONAL_FLUVV_CUSTOM_PROPERTIES,
-    MissingCustomPropertyError,
-    get_custom_property,
-    load_odcs_document,
-    parse_extension,
-)
-from fluvv.schema import GOVERNANCE_KINDS, validate_custom_property, validate_governance_document
+from fluvv.contract import MissingCustomPropertyError, load_odcs_document, parse_extension, yaml_problem
+from fluvv.schema import GOVERNANCE_KINDS, custom_property_errors, odcs_errors, validate_governance_document
 from fluvv.semantic import SemanticIssue, run_governance_file_checks, run_semantic_checks
 
 
@@ -53,7 +47,12 @@ class LintResult:
 def lint(contract_path: Path | str) -> LintResult:
     """Lint a contract, or a governance file (dispatched on its `kind`)."""
     contract_path = Path(contract_path)
-    doc = load_odcs_document(contract_path) or {}
+    try:
+        doc = load_odcs_document(contract_path)
+    except yaml.YAMLError as exc:
+        return LintResult(contract_path=contract_path, schema_errors=[yaml_problem(exc)])
+    if not isinstance(doc, dict):
+        return LintResult(contract_path=contract_path, schema_errors=["the file is empty or isn't a YAML mapping"])
     if doc.get("kind") in GOVERNANCE_KINDS:
         return lint_governance_file(contract_path, doc)
     result = LintResult(contract_path=contract_path)
@@ -68,29 +67,12 @@ def lint(contract_path: Path | str) -> LintResult:
         ]
 
     # 2. Fluvv customProperties: presence + JSON Schema shape.
-    for property_name in FLUVV_CUSTOM_PROPERTIES:
-        value = get_custom_property(doc, property_name)
-        if value is None:
-            result.schema_errors.append(
-                f"missing required customProperties entry '{property_name}'"
-            )
-            continue
-        result.schema_errors += [
-            f"{property_name}: {error.message}"
-            for error in validate_custom_property(property_name, value)
-        ]
-    # 2b. Optional Fluvv customProperties: shape-validated only if present --
-    # never "missing", a contract that omits these is still complete.
-    for property_name in OPTIONAL_FLUVV_CUSTOM_PROPERTIES:
-        value = get_custom_property(doc, property_name)
-        if value is not None:
-            result.schema_errors += [
-                f"{property_name}: {error.message}"
-                for error in validate_custom_property(property_name, value)
-            ]
+    result.schema_errors = custom_property_errors(doc)
 
     # 3. Semantic checks (only meaningful once the shape above is valid).
-    if not result.schema_errors:
+    # They read the ODCS structure (schema objects, columns, team), so they
+    # also wait for that to be valid; step 1 has said what's wrong with it.
+    if not result.schema_errors and not odcs_errors(doc):
         try:
             extension = parse_extension(doc, contract_path)
         except MissingCustomPropertyError as exc:

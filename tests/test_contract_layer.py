@@ -172,6 +172,18 @@ def test_export_outside_a_repository_says_so_in_one_line(tmp_path):
     assert "isn't inside a Fluvv repository" in result.output
 
 
+def test_lint_reports_broken_yaml_and_odcs_structure_without_crashing(tmp_path):
+    bad_yaml = tmp_path / "bad.yaml"
+    bad_yaml.write_text("id: [unclosed\n")
+    assert lint(bad_yaml).schema_errors == ["invalid YAML at line 2: expected ',' or ']', but got '<stream end>'"]
+    (tmp_path / "list.yaml").write_text("- a\n")
+    assert not lint(tmp_path / "list.yaml").passed
+    not_a_list = tmp_path / "cars.yaml"
+    not_a_list.write_text((EXAMPLE / "contracts/silver/sales/cars.yaml").read_text().replace("\nschema:\n", "\nschema: oops\nold:\n", 1))
+    result = lint(not_a_list)
+    assert not result.passed and any("schema must be array" in e for e in result.odcs_errors)
+
+
 def test_governance_file_schema_errors_are_reported(tmp_path):
     path = tmp_path / "domain.yaml"
     path.write_text("apiVersion: fluvv/v1\nkind: Domain\nname: x\n")
@@ -213,6 +225,46 @@ def test_compile_lists_every_broken_reference_and_writes_nothing(tmp_path, monke
     assert result.exit_code == 1
     assert "[unknown-business-term]" in result.output
     assert not (repo / "target").exists()
+
+
+def test_compile_reports_files_that_fail_lint_and_checks_no_references(tmp_path):
+    """References into a broken file can't be judged, so compile lists the
+    files lint would fail on, in one line each, and stops there."""
+    repo = tmp_path / "repo"
+    shutil.copytree(EXAMPLE, repo)
+    (repo / "contracts/silver/sales/cars.yaml").write_text("id: [unclosed\n")
+    team = repo / "contracts/gold/sales/cars.yaml"
+    team.write_text(team.read_text().replace("team:\n", "team: nobody\nold_team:\n", 1))
+    (repo / "governance/glossaries/sales.yaml").write_text("apiVersion: fluvv/v1\nkind: Glossary\n")
+    with pytest.raises(ProjectCheckError) as excinfo:
+        manifest.compile_manifest(repo)
+    issues = {i.path: i for i in excinfo.value.issues}
+    assert {i.code for i in issues.values()} == {"fails-lint"}
+    assert sorted(issues) == ["contracts/gold/sales/cars.yaml", "contracts/silver/sales/cars.yaml", "governance/glossaries/sales.yaml"]
+    assert "invalid YAML at line 2" in issues["contracts/silver/sales/cars.yaml"].message
+    assert "run `fluvv lint contracts/gold/sales/cars.yaml`" in issues["contracts/gold/sales/cars.yaml"].message
+
+
+def test_compile_refuses_a_folder_with_nothing_to_compile(tmp_path, monkeypatch):
+    with pytest.raises(ProjectCheckError) as excinfo:
+        manifest.compile_manifest(tmp_path)
+    assert [i.code for i in excinfo.value.issues] == ["not-a-repository"]
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(cli.build_app(), ["compile"])
+    assert result.exit_code == 1 and "[not-a-repository]" in result.output
+    assert not (tmp_path / "target").exists()
+
+
+def test_compile_reports_one_missing_domain_once(tmp_path):
+    repo = tmp_path / "repo"
+    shutil.copytree(EXAMPLE, repo)
+    (repo / "governance/domains/sales.yaml").unlink()
+    with pytest.raises(ProjectCheckError) as excinfo:
+        manifest.compile_manifest(repo)
+    assert len(excinfo.value.issues) == 12  # 10 contracts, the glossary and the product name it
+    report = excinfo.value.report()
+    assert report.splitlines()[0] == "1 problem(s); nothing compiled:"
+    assert report.count("[unknown-domain]") == 1 and "in 12 files: contracts/bronze/sales/cars.yaml, " in report
 
 
 def test_compile_checks_each_contract_sits_where_its_id_says(tmp_path):
