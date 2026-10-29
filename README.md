@@ -99,4 +99,4 @@ commands to the same `fluvv` CLI.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](https://github.com/fluvvhq/fluvv/blob/main/LICENSE) and [NOTICE](https://github.com/fluvvhq/fluvv/blob/main/NOTICE).
