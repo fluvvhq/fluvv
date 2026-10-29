@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fluvv"
-version = "1.0.0.dev0"
+version = "1.0.0"
 description = "Fluvv data contracts: an ODCS v3.1.0 extension that describes a table and how it's built, with lint, compile and export."
 readme = "README.md"
 license = "Apache-2.0"

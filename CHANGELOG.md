@@ -4,9 +4,9 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
-## [Unreleased]
+## [1.0.0] - 2026-10-29
 
-The first release, 1.0.0.
+The first release.
 
 ### Added
 
