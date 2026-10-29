@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.metadata import entry_points
+from importlib.metadata import entry_points, version
 from pathlib import Path
 from typing import Callable
 
@@ -108,6 +108,13 @@ def _engine_required(name: str) -> Callable[[], None]:
     return command
 
 
+def _print_version(show: bool) -> None:
+    # An option callback, so it runs before typer asks for a subcommand.
+    if show:
+        typer.echo(f"fluvv {version('fluvv')}")
+        raise typer.Exit()
+
+
 def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
     return [ep.load() for ep in entry_points(group=PLUGIN_GROUP)]
 
@@ -116,7 +123,11 @@ def build_app() -> typer.Typer:
     app = typer.Typer(help="Fluvv tooling: lint, export and compile Fluvv contracts and governance files.")
 
     @app.callback()
-    def _main() -> None:
+    def _main(
+        show_version: bool = typer.Option(
+            False, "--version", is_eager=True, callback=_print_version, help="Print the installed fluvv version and exit."
+        ),
+    ) -> None:
         """(Callback present so `lint` stays an explicit subcommand as more get added.)"""
 
     app.command(name="lint")(lint_command)

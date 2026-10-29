@@ -128,3 +128,15 @@ def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch):
     result = CliRunner().invoke(cli.build_app(), ["ingest", "contracts/silver/sales/cars.yaml"])
     assert result.exit_code == 1
     assert "Fluvv Engine" in result.output
+
+
+def test_version_flag_prints_the_installed_version():
+    from importlib.metadata import version
+
+    from typer.testing import CliRunner
+
+    from fluvv import cli
+
+    result = CliRunner().invoke(cli.build_app(), ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == f"fluvv {version('fluvv')}"
