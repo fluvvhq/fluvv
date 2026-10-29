@@ -32,14 +32,22 @@ dependencies = [
     # simultaneously -- pip's resolver hit "resolution-too-deep" on that
     # combined graph. Add specific cloud extras later, one at a time, only
     # when a cloud backend is actually needed: fluvv is local-first.
-    "datacontract-cli[dataframe,duckdb,csv,parquet]==1.1.1",
+    # Below the next minor: fluvv reads the ODCS schemas datacontract-cli
+    # ships and depends on its lint and test results, so a new minor gets
+    # tested before it's allowed.
+    "datacontract-cli[dataframe,duckdb,csv,parquet]>=1.1.1,<1.2",
     # Already present transitively via datacontract-cli, but fluvv imports
-    # them directly, so they're pinned here rather than relied on implicitly.
-    "pyyaml==6.0.3",
-    "jsonschema==4.26.0",
-    "sqlglot==30.17.0",
-    "typer==0.27.1",
-    "pydantic==2.13.4",
+    # them directly, so they're declared here rather than relied on
+    # implicitly. Ranges, not pins: an installed library shares its
+    # environment with others. Each lower bound is the oldest version the
+    # tests pass with (CI's lowest-versions job).
+    "pyyaml>=6.0.1,<7",
+    "jsonschema>=4.23,<5",
+    # 28 is the first to name a query's CTE list `with_`, which
+    # fluvv.lineage sets when it composes per-source transforms.
+    "sqlglot>=28,<31",
+    "typer>=0.18,<1",
+    "pydantic>=2.8.2,<3",
 ]
 
 [project.urls]
