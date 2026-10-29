@@ -1,0 +1,5 @@
+# The source distribution carries what it takes to run the tests from it
+# (distributions and conda-forge do), plus the spec and the changelog.
+include CHANGELOG.md CONTRIBUTING.md
+recursive-include tests *.py *.yaml
+recursive-include docs *.md *.yaml
