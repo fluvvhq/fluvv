@@ -71,6 +71,54 @@ def test_engine_methods_name_fluvv_engine_when_it_is_missing(without_engine):
     assert "Contract.ingest()" in str(excinfo.value)
 
 
+def test_test_checks_the_table_without_spark_or_the_engine(without_engine, tmp_path):
+    """`.test()` with no Spark session is datacontract-cli's schema and
+    quality checks, which read the table themselves."""
+    table = tmp_path / "t.csv"
+    table.write_text("k,v\na,1\nb,2\n")
+    path = tmp_path / "t.yaml"
+    path.write_text(f"""\
+apiVersion: v3.1.0
+kind: DataContract
+id: bronze.d.t
+name: d_t_bronze
+version: 0.1.0
+status: active
+servers:
+  - server: local
+    type: local
+    path: {table}
+    format: csv
+schema:
+  - name: t
+    properties:
+      - name: k
+        logicalType: string
+        required: true
+        unique: true
+customProperties:
+  - property: medallionLayer
+    value: bronze
+  - property: sources
+    value:
+      - id: landing
+        contract: null
+        location: {tmp_path}/landing
+        format: csv
+        read: spark_read_file
+  - property: ingestion_config
+    value:
+      write: spark_write_file
+""")
+    contract = fluvv.Contract(path)
+    assert contract.test().has_passed()
+    table.write_text("k,v\na,1\na,2\n")
+    failed = [c.name for c in contract.test().checks if c.result == "failed"]
+    assert failed == ["Check that unique field k has no duplicate values"]
+    with pytest.raises(product.EngineRequiredError, match="Fluvv Engine"):
+        contract.test(spark=object())  # the recording, freshness-checking test is the engine's
+
+
 def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch):
     from typer.testing import CliRunner
 

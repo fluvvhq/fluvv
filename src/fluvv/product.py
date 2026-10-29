@@ -1,10 +1,10 @@
 """The `Contract` class: one Fluvv contract file, wrapped with the methods
 that make it a Data Product.
 
-`.lint()` and `.lineage()` run here, in the open package. The methods that
-read or write data run in Fluvv Engine (`fluvv_engine.contract`); here they
-only hand over to it, imported on first use, so the open package installs
-and runs without Spark.
+`.lint()`, `.lineage()` and `.test()` without Spark run here, in the open
+package. The methods that read or write data through Spark run in Fluvv
+Engine (`fluvv_engine.contract`); here they only hand over to it, imported
+on first use, so the open package installs and runs without Spark.
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import importlib
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Iterable
+
+from datacontract.data_contract import DataContract
 
 from fluvv.contract import load_odcs_document, parse_extension
 from fluvv.lineage import build_lineage_graph
@@ -77,8 +79,13 @@ class Contract:
         each catalog registration strategy in `register`."""
         return _engine("ingest").ingest(self, spark, register)
 
-    def test(self, spark: SparkSession) -> Run:
-        """Checks the target table against the contract and records the results."""
+    def test(self, spark: SparkSession | None = None) -> Run:
+        """Checks the target table against the contract's schema and quality
+        rules (datacontract-cli, no Spark) and returns the result. Given a
+        Spark session, Fluvv Engine runs the same checks, adds the freshness
+        SLA and records every check in the contract's `quality_results`."""
+        if spark is None:
+            return DataContract(data_contract_file=str(self.path)).test()
         return _engine("test").test(self, spark)
 
     def read(self, spark: SparkSession) -> DataFrame:

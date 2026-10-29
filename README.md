@@ -80,6 +80,7 @@ from fluvv import Contract
 
 contract = Contract("contracts/silver/sales/cars.yaml")
 contract.lint().passed   # True
+contract.test().result   # the table against the contract's schema and quality rules
 contract.lineage()       # {'upstream': ['bronze.sales.cars'], 'downstream': [...]}
 ```
 
