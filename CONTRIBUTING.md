@@ -29,4 +29,15 @@ supported version, and once more with the oldest dependency versions
   import of pyspark, delta, unitycatalog, httpx or fluvv_engine.
 - **Comments say why**, not what the code already says.
 
+## Releasing
+
+1. Set the new version in `pyproject.toml`, and move the changelog's
+   Unreleased entries under it with today's date.
+2. Commit, then tag and push: `git tag v1.2.3 && git push origin v1.2.3`.
+
+The release workflow takes it from there: it publishes to TestPyPI,
+installs that build and runs it on the example, and only then publishes
+to PyPI. A tag that doesn't match the version in `pyproject.toml` stops
+at the first step.
+
 Contributions are licensed under Apache-2.0, like the rest of the project.
