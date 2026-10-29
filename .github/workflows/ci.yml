@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }}${{ matrix.resolution == 'lowest-direct' && ', oldest dependencies' || '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+        resolution: [highest]
+        include:
+          # The lower bounds in pyproject.toml are only true if the tests
+          # pass with exactly those versions.
+          - python: "3.10"
+            resolution: lowest-direct
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v10
+      - name: Install
+        run: uv pip install --system --resolution ${{ matrix.resolution }} ".[dev]"
+      - name: Test
+        run: python -m pytest -q
+
+  package:
+    name: Build and smoke-test the wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Build
+        run: |
+          pip install build twine
+          python -m build
+          twine check --strict dist/*
+      - name: Install the wheel and run it on the example
+        run: |
+          pip install dist/*.whl
+          fluvv --version
+          cd tests/fixtures/sales
+          fluvv lint
+          fluvv compile

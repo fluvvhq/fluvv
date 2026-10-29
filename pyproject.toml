@@ -12,11 +12,14 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "The Fluvv Authors" }]
 keywords = ["data contracts", "odcs", "odps", "data governance", "data lineage", "medallion"]
-# Only versions the tests run on are listed.
+# Only versions CI runs the tests on are listed (.github/workflows/ci.yml).
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Database",
     "Topic :: Software Development :: Quality Assurance",
