@@ -50,6 +50,10 @@ dependencies = [
     "pydantic>=2.8.2,<3",
 ]
 
+[project.optional-dependencies]
+# For working on fluvv itself: `pip install -e .[dev]`, then `pytest`.
+dev = ["pytest>=8,<10"]
+
 [project.urls]
 Homepage = "https://fluvv.se"
 Documentation = "https://fluvv.se/docs"
