@@ -125,7 +125,8 @@ the contract level (the `transform` customProperty):
   source's (transformed) view, i.e. `SELECT * FROM <id>`.
 
 Spark SQL has no `QUALIFY`; deduplicate with `ROW_NUMBER() OVER (...)` in
-a subquery filtered by the outer `WHERE` (see `contracts/silver/sales/cars.yaml`).
+a subquery filtered by the outer `WHERE` (see the example's
+[`contracts/silver/sales/cars.yaml`](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/silver/sales/cars.yaml)).
 
 ### 3.3 `ingestion_config` (required)
 
@@ -152,8 +153,9 @@ source data stacks a second copy on top and fails those checks.
 
 `append` is for a target meant to accumulate raw history across runs,
 typically bronze reading a landing zone, where re-delivery of the same
-records is an accepted, documented possibility (see
-`contracts/bronze/sales/cars.yaml`'s `description.limitations`). A
+records is an accepted, documented possibility (see the example's
+[`contracts/bronze/sales/cars.yaml`](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/bronze/sales/cars.yaml),
+`description.limitations`). A
 downstream contract that needs one row per key handles that at read time
 with its own dedup; `mode` only controls how *this* contract's target is
 written.
@@ -199,8 +201,9 @@ path: contracts/<medallionLayer>/<domain>/<name>.yaml
 
 ### 3.7 Example
 
-A multi-source contract with per-source transforms
-(`contracts/gold/sales/dealership_performance.yaml`, abridged):
+A multi-source contract with per-source transforms, from the example
+repository ([`contracts/gold/sales/dealership_performance.yaml`](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/gold/sales/dealership_performance.yaml),
+abridged):
 
 ```yaml
 customProperties:
@@ -237,8 +240,10 @@ customProperties:
 ```
 
 A single-source landing → bronze contract is in
-`docs/fluvv/examples/minimal.yaml`. The `contracts/*/sales/cars.yaml` chain
-shows passthrough (bronze), dedup + rename (silver) and aggregation (gold).
+`docs/fluvv/examples/minimal.yaml`. In the example repository, the cars
+chain shows passthrough ([bronze](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/bronze/sales/cars.yaml)),
+dedup + rename ([silver](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/silver/sales/cars.yaml)) and
+aggregation ([gold](https://github.com/fluvvhq/fluvv-example/blob/main/contracts/gold/sales/cars.yaml)).
 
 ## 4. The contract: profile rules on standard ODCS fields
 

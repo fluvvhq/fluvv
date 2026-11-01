@@ -96,6 +96,8 @@ commands to the same `fluvv` CLI.
 - [The spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md):
   the contract format, governance files, lint codes and manifest.
 - [fluvv.se/docs](https://fluvv.se/docs): guides and reference.
+- [fluvv-example](https://github.com/fluvvhq/fluvv-example): a complete
+  repository to clone, from landing CSVs to gold tables in ten contracts.
 
 ## License
 
