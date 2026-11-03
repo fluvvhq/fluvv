@@ -62,6 +62,8 @@ customProperties:
 fluvv lint                                     # every contract and governance file; or name files/folders
 fluvv compile                                  # references between files, then -> target/manifest.json
 fluvv export contracts/silver/sales/cars.yaml  # Spark schema + resolved ingestion config
+fluvv list contracts --layer gold              # also: list domains | products | terms
+fluvv show gold.sales.cars                     # one contract, data product, domain or term, in full
 ```
 
 `lint` checks each file on its own: its JSON Schema, then what a schema
@@ -71,7 +73,9 @@ repository's files fit together (domains, glossary terms, upstream
 contracts and relationships all resolve) and then writes one manifest
 with every contract, the governance around it, and table- and
 column-level lineage derived from the transforms. If a reference is
-broken, it lists every one and writes nothing.
+broken, it lists every one and writes nothing. `list` and `show` print
+what that manifest holds: who owns which domain, data product and
+contract, what each glossary term means and which columns use it.
 
 ## In Python
 

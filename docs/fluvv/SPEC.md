@@ -39,7 +39,7 @@ governance files under `governance/`. Repo-relative paths, such as
 `contracts/` for a file at `contracts/<layer>/<domain>/<table>.yaml`, the
 directory above `governance/` for a file at `governance/<kind>/<file>`,
 and otherwise the nearest directory holding `contracts/` or `governance/`. The open `fluvv` package implements this spec (lint, compile,
-export); building tables from contracts is Fluvv Engine,
+export, list and show); building tables from contracts is Fluvv Engine,
 a separate commercial package.
 
 | | ODCS v3 | Fluvv |
@@ -448,7 +448,33 @@ is gitignored), since it changes on almost every contract edit. Compiling
 checks first that every reference between files resolves (Section 6.3) and
 writes nothing if one doesn't. A consumer handed a prebuilt
 manifest checks `sourceHash` against the repo (`fluvv.manifest.check_fresh`)
-and refuses a stale one.
+and refuses a stale one; `fluvv.manifest.read_or_compile` does both, or
+compiles the repo when given no file.
+
+### 7.1 Listing what it holds: `list` and `show`
+
+```bash
+python -m fluvv list domains                  # owner, and how many data products, contracts and terms
+python -m fluvv list products [--domain D]    # domain, owner, number of contracts
+python -m fluvv list contracts [--domain D] [--layer L] [--product P]   # bronze to gold: owner, data products, freshness
+python -m fluvv list terms [--domain D]       # domain, definition
+python -m fluvv show <name>                   # one contract (by id or file), data product, domain or glossary term, in full
+```
+
+Both print plain aligned text read from the manifest, so they show what
+an integration reading it sees, and they take the same `--manifest`
+option the OpenMetadata push does. Without it they compile the
+repository on the spot rather than reading `target/manifest.json`, which
+may be older than the files; a repository that doesn't compile prints
+compile's report instead (Section 6.3). With it, they read that prebuilt
+file, refused if it's stale against the repository's files; on a machine
+holding only the manifest there's nothing to compare, so it's read as is.
+A filter naming no domain, layer or data product in the
+repository is a usage error listing the ones that exist. `show` of a
+contract lists its governance, references, direct upstream and downstream
+contracts, and each column's type, glossary term and classification; of a
+term, the columns that use it. A name matching several kinds, such as a
+data product named after its domain, shows each.
 
 ## 8. Generated artifacts
 

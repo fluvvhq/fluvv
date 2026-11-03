@@ -221,7 +221,10 @@ def write_manifest(repo_root: Path | str = ".", out: Path | str | None = None) -
 
 
 def load_manifest(path: Path | str) -> dict[str, Any]:
-    manifest = json.loads(Path(path).read_text())
+    try:
+        manifest = json.loads(Path(path).read_text())
+    except ValueError as exc:  # not JSON, or not UTF-8 text
+        raise ValueError(f"{path}: not a manifest: {exc}") from None
     if manifest.get("manifestVersion") != MANIFEST_VERSION:
         raise ValueError(f"{path}: manifestVersion {manifest.get('manifestVersion')!r}, expected {MANIFEST_VERSION!r}; run `fluvv compile`")
     return manifest
@@ -237,3 +240,22 @@ def check_fresh(manifest: dict[str, Any], repo_root: Path | str = ".") -> None:
         return
     if manifest["sourceHash"] != source_hash(repo_root.resolve()):
         raise StaleManifestError("the manifest is stale: contracts or governance files changed since it was compiled; run `fluvv compile`")
+
+
+def read_or_compile(path: Path | str | None = None, repo_root: Path | str = ".") -> dict[str, Any]:
+    """The manifest a command works from: compiled from `repo_root` on
+    the spot, or, given `path`, that prebuilt file, refused if it's stale.
+    Compiling by default means a command never shows an out-of-date
+    target/manifest.json; `path` is for a machine holding only the
+    manifest, or a repo large enough that compiling each time is slow.
+    Raises ProjectCheckError if the repo doesn't compile, and
+    StaleManifestError (a ValueError, like a file this version can't read)
+    if `path` is stale; either names the file."""
+    if path is None:
+        return compile_manifest(repo_root)
+    manifest = load_manifest(path)
+    try:
+        check_fresh(manifest, repo_root)
+    except StaleManifestError as exc:
+        raise StaleManifestError(f"{path}: {exc}") from None
+    return manifest

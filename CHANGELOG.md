@@ -4,6 +4,22 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
+## [Unreleased]
+
+### Added
+
+- `fluvv list domains | products | contracts | terms` and `fluvv show
+  <name>`: the repository's governance as plain text, read from the
+  manifest, compiled on the spot or given with `--manifest` (refused if
+  stale). `list contracts` filters by `--domain`, `--layer` and
+  `--product`.
+- `fluvv.manifest.read_or_compile`: the manifest a command works from,
+  compiled from the repo or a prebuilt file checked for staleness.
+
+### Changed
+
+- `fluvv.manifest.load_manifest` names the file when it isn't JSON.
+
 ## [1.0.0] - 2026-10-29
 
 The first release.

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from importlib.metadata import entry_points, version
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import typer
 
+from fluvv import views
 from fluvv.contract import RepoRootNotFoundError
 from fluvv.export import export_artifacts
+from fluvv.governance import LAYERS
 from fluvv.lint import lint
-from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
+from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, read_or_compile, write_manifest
 from fluvv.semantic import ProjectCheckError
 
 # Installed packages add commands to the `fluvv` CLI by registering a
@@ -95,6 +97,101 @@ def compile_command(
         raise typer.Exit(code=1)
 
 
+def _manifest_option() -> Any:
+    return typer.Option(
+        None,
+        "--manifest",
+        exists=True,
+        dir_okay=False,
+        help="Read this compiled manifest (`fluvv compile`) instead of compiling one from the repo. "
+        "Refused if it's stale against the repo's contracts/governance files.",
+    )
+
+
+def _manifest(manifest_path: Path | None) -> dict[str, Any]:
+    """What `list` and `show` read: compiled from the repo in the current
+    directory, or the prebuilt manifest given with --manifest."""
+    try:
+        return read_or_compile(manifest_path, Path("."))
+    except ProjectCheckError as exc:
+        message = exc.report()
+    except ValueError as exc:
+        if manifest_path is None:
+            raise
+        message = str(exc)  # stale, or not a manifest this version reads; it names the file
+    typer.echo(message, err=True)
+    raise typer.Exit(code=1)
+
+
+def _check_known(value: str | None, known: list[str], option: str) -> None:
+    # A filter naming nothing in the repo is far more likely a typo than a
+    # question whose answer is an empty list.
+    if value is not None and value not in known:
+        choices = ", ".join(known) or "there are none"
+        raise typer.BadParameter(f"{value!r} isn't one of: {choices}", param_hint=option)
+
+
+def list_domains_command(manifest_path: Path = _manifest_option()) -> None:
+    """List domains, with each one's owner and how many data products,
+    contracts and glossary terms it has."""
+    typer.echo(views.domains(_manifest(manifest_path)))
+
+
+def list_products_command(
+    domain: str = typer.Option(None, "--domain", help="Only this domain's data products."),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """List data products, with each one's domain, owner and number of
+    contracts (its output ports)."""
+    manifest = _manifest(manifest_path)
+    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
+    typer.echo(views.products(manifest, domain))
+
+
+def list_contracts_command(
+    domain: str = typer.Option(None, "--domain", help="Only this domain's contracts."),
+    layer: str = typer.Option(None, "--layer", help="Only this layer's contracts: bronze, silver or gold."),
+    product: str = typer.Option(None, "--product", help="Only this data product's contracts."),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """List contracts, bronze to gold, with each one's owner, data products
+    and freshness SLA."""
+    _check_known(layer, list(LAYERS), "--layer")
+    manifest = _manifest(manifest_path)
+    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
+    _check_known(product, sorted(p["name"] for p in manifest["dataProducts"]), "--product")
+    typer.echo(views.contracts(manifest, domain, layer, product))
+
+
+def list_terms_command(
+    domain: str = typer.Option(None, "--domain", help="Only this domain's glossary."),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """List glossary terms, with each one's domain and definition."""
+    manifest = _manifest(manifest_path)
+    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
+    typer.echo(views.terms(manifest, domain))
+
+
+def show_command(
+    name: str = typer.Argument(..., help="A contract id or file, data product, domain or glossary term."),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """Show everything the repository says about one contract, data
+    product, domain or glossary term."""
+    manifest = _manifest(manifest_path)
+    # A contract file by any path, as the other commands take one; the
+    # manifest knows it by its path from the repo root, here.
+    candidate, root = Path(name).resolve(), Path(".").resolve()
+    if candidate.is_file() and candidate.is_relative_to(root):
+        name = candidate.relative_to(root).as_posix()
+    shown = views.show(manifest, name)
+    if shown is None:
+        typer.echo(f"nothing named {name!r}: no contract, data product, domain or glossary term has that name", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(shown)
+
+
 def _engine_required(name: str) -> Callable[[], None]:
     def command() -> None:
         typer.echo(
@@ -120,7 +217,9 @@ def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
 
 
 def build_app() -> typer.Typer:
-    app = typer.Typer(help="Fluvv tooling: lint, export and compile Fluvv contracts and governance files.")
+    app = typer.Typer(
+        help="Fluvv tooling: lint, export and compile Fluvv contracts and governance files, and list what they define."
+    )
 
     @app.callback()
     def _main(
@@ -133,6 +232,13 @@ def build_app() -> typer.Typer:
     app.command(name="lint")(lint_command)
     app.command(name="export")(export_command)
     app.command(name="compile")(compile_command)
+    list_app = typer.Typer(help="List the repository's domains, data products, contracts or glossary terms.", no_args_is_help=True)
+    list_app.command(name="domains")(list_domains_command)
+    list_app.command(name="products")(list_products_command)
+    list_app.command(name="contracts")(list_contracts_command)
+    list_app.command(name="terms")(list_terms_command)
+    app.add_typer(list_app, name="list")
+    app.command(name="show")(show_command)
     for register in _plugin_registrars():
         register(app)
 
