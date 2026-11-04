@@ -46,7 +46,14 @@ def _engine(method: str) -> ModuleType:
             "The open fluvv package lints, compiles and exports contracts; "
             "see https://fluvv.se/engine to run them."
         ) from None
-    return importlib.import_module("fluvv_engine.contract")
+    module = importlib.import_module("fluvv_engine.contract")
+    # The engine accepts any fluvv of its major version, so this fluvv may
+    # be newer than the installed engine and hand over a method it lacks.
+    if not hasattr(module, method):
+        raise EngineRequiredError(
+            f"Contract.{method}() needs a newer Fluvv Engine than the one installed; see https://fluvv.se/engine."
+        )
+    return module
 
 
 class Contract:

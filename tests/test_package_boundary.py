@@ -119,7 +119,7 @@ customProperties:
         contract.test(spark=object())  # the recording, freshness-checking test is the engine's
 
 
-def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch):
+def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch, without_engine):
     from typer.testing import CliRunner
 
     from fluvv import cli
@@ -127,7 +127,30 @@ def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch):
     monkeypatch.setattr(cli, "_plugin_registrars", lambda: [])
     result = CliRunner().invoke(cli.build_app(), ["ingest", "contracts/silver/sales/cars.yaml"])
     assert result.exit_code == 1
-    assert "Fluvv Engine" in result.output
+    assert "part of Fluvv Engine, which isn't installed" in result.output
+
+
+@pytest.fixture
+def older_engine(monkeypatch):
+    """An installed engine from before this fluvv: it has none of the
+    methods or commands fluvv hands over."""
+    import types
+
+    monkeypatch.setitem(sys.modules, "fluvv_engine", types.ModuleType("fluvv_engine"))
+    monkeypatch.setitem(sys.modules, "fluvv_engine.contract", types.ModuleType("fluvv_engine.contract"))
+
+
+def test_an_older_engine_is_named_as_too_old_not_missing(monkeypatch, older_engine):
+    from typer.testing import CliRunner
+
+    from fluvv import cli
+
+    with pytest.raises(product.EngineRequiredError, match="needs a newer Fluvv Engine"):
+        fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").read(spark=object())
+    monkeypatch.setattr(cli, "_plugin_registrars", lambda: [])
+    result = CliRunner().invoke(cli.build_app(), ["ingest", "contracts/silver/sales/cars.yaml"])
+    assert result.exit_code == 1
+    assert "needs a newer Fluvv Engine" in result.output
 
 
 def test_version_flag_prints_the_installed_version():

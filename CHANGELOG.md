@@ -4,6 +4,20 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
+## [Unreleased]
+
+### Added
+
+- A supported API, listed in the README under Versioning: what code
+  building on fluvv may rely on within a major version. Tests fail when a
+  listed function's parameters or a listed exception's base change.
+
+### Changed
+
+- A `Contract` method or engine command that the installed Fluvv Engine
+  predates says a newer engine is needed, instead of failing with an
+  `AttributeError` or saying the engine isn't installed.
+
 ## [1.1.0] - 2026-11-04
 
 ### Added

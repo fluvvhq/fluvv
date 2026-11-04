@@ -95,6 +95,34 @@ publishing them to OpenMetadata is [Fluvv Engine](https://fluvv.se/engine).
 It installs on top of this package and adds `ingest` and the catalog
 commands to the same `fluvv` CLI.
 
+## Versioning
+
+Releases follow [semantic versioning](https://semver.org/). Within a major
+version, everything below keeps working as it does; anything not listed is
+internal and may change in any release. Adding a parameter with a default,
+a command option or a manifest key isn't a breaking change.
+
+- The `fluvv` CLI's commands and options.
+- The contract and governance file formats, versioned by
+  [the spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md).
+- The manifest: `manifestVersion` stays `"2"` and keys are only added.
+- Everything `fluvv` exports (`fluvv.__all__`), `Contract`'s `path`, `doc`
+  and `id`, and `fluvv.product.EngineRequiredError`.
+- For packages building on fluvv, such as Fluvv Engine, which relies on
+  nothing else and so works with any fluvv of its major version:
+  - `fluvv.contract`: `find_repo_root`, `load_odcs_document`,
+    `parse_extension`, `resolve_extension`, `get_custom_property`,
+    `RepoRootNotFoundError`
+  - `fluvv.governance`: `load_contracts`, `schema_object`, `columns`,
+    `primary_key`, `owner`, `medallion_layer`, `sla_entry`,
+    `retention_period`, `freshness_period`, `freshness_hours`
+  - `fluvv.manifest`: `compile_manifest`, `write_manifest`,
+    `load_manifest`, `check_fresh`, `read_or_compile`, `StaleManifestError`
+  - `fluvv.lineage`: `combine_sql`
+  - `fluvv.semantic`: `ProjectCheckError`
+  - The `fluvv.commands` entry point: a `register(app)` function, given
+    the CLI's Typer app, that adds commands to it.
+
 ## Documentation
 
 - [The spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md):

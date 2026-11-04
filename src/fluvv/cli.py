@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from importlib.metadata import entry_points, version
 from pathlib import Path
 from typing import Any, Callable
@@ -192,13 +193,22 @@ def show_command(
     typer.echo(shown)
 
 
+def _engine_installed() -> bool:
+    try:
+        importlib.import_module("fluvv_engine")
+    except ModuleNotFoundError as exc:
+        if exc.name != "fluvv_engine":
+            raise  # installed, but broken: keep the traceback
+        return False
+    return True
+
+
 def _engine_required(name: str) -> Callable[[], None]:
     def command() -> None:
-        typer.echo(
-            f"`fluvv {name}` is part of Fluvv Engine, which isn't installed. "
-            "See https://fluvv.se/engine.",
-            err=True,
-        )
+        # The engine accepts any fluvv of its major version, so an installed
+        # engine may predate a command this fluvv knows it for.
+        reason = "needs a newer Fluvv Engine than the one installed" if _engine_installed() else "is part of Fluvv Engine, which isn't installed"
+        typer.echo(f"`fluvv {name}` {reason}. See https://fluvv.se/engine.", err=True)
         raise typer.Exit(code=1)
 
     command.__doc__ = "Part of Fluvv Engine (not installed)."
