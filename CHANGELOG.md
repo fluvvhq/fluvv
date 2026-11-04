@@ -8,6 +8,12 @@ version in [the spec](docs/fluvv/SPEC.md).
 
 ### Added
 
+- `fluvv impact <contract>[.<column>]`: everything downstream of a table
+  or column, nearest first, with its owner and data products.
+- `fluvv list columns`, filtered by `--domain`, `--contract` and a
+  repeatable `--classification` (e.g. where personal data is), and an
+  `--owner` filter on `list contracts` and `list products`.
+- `fluvv.Project`: the same reads in Python, returning manifest entries.
 - A supported API, listed in the README under Versioning: what code
   building on fluvv may rely on within a major version. Tests fail when a
   listed function's parameters or a listed exception's base change.

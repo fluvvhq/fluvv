@@ -10,9 +10,10 @@ import typer
 from fluvv import views
 from fluvv.contract import RepoRootNotFoundError
 from fluvv.export import export_artifacts
-from fluvv.governance import LAYERS
+from fluvv.governance import CLASSIFICATIONS, LAYERS
 from fluvv.lint import lint
-from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, read_or_compile, write_manifest
+from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
+from fluvv.project import Project
 from fluvv.semantic import ProjectCheckError
 
 # Installed packages add commands to the `fluvv` CLI by registering a
@@ -109,11 +110,11 @@ def _manifest_option() -> Any:
     )
 
 
-def _manifest(manifest_path: Path | None) -> dict[str, Any]:
-    """What `list` and `show` read: compiled from the repo in the current
-    directory, or the prebuilt manifest given with --manifest."""
+def _project(manifest_path: Path | None) -> Project:
+    """What `list`, `show` and `impact` read: compiled from the repo in the
+    current directory, or the prebuilt manifest given with --manifest."""
     try:
-        return read_or_compile(manifest_path, Path("."))
+        return Project(".", manifest_path)
     except ProjectCheckError as exc:
         message = exc.report()
     except ValueError as exc:
@@ -132,36 +133,53 @@ def _check_known(value: str | None, known: list[str], option: str) -> None:
         raise typer.BadParameter(f"{value!r} isn't one of: {choices}", param_hint=option)
 
 
+def _owners(entries: list[dict[str, Any]]) -> list[str]:
+    return sorted({e["owner"] for e in entries if e["owner"]})
+
+
+def _repo_relative(name: str) -> str:
+    # A contract file by any path, as the other commands take one; the
+    # manifest knows it by its path from the repo root, here.
+    candidate, root = Path(name).resolve(), Path(".").resolve()
+    if candidate.is_file() and candidate.is_relative_to(root):
+        return candidate.relative_to(root).as_posix()
+    return name
+
+
 def list_domains_command(manifest_path: Path = _manifest_option()) -> None:
     """List domains, with each one's owner and how many data products,
     contracts and glossary terms it has."""
-    typer.echo(views.domains(_manifest(manifest_path)))
+    typer.echo(views.domains(_project(manifest_path)))
 
 
 def list_products_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's data products."),
+    owner: str = typer.Option(None, "--owner", help="Only data products this team owns."),
     manifest_path: Path = _manifest_option(),
 ) -> None:
     """List data products, with each one's domain, owner and number of
     contracts (its output ports)."""
-    manifest = _manifest(manifest_path)
-    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
-    typer.echo(views.products(manifest, domain))
+    project = _project(manifest_path)
+    _check_known(domain, [d["name"] for d in project.domains()], "--domain")
+    _check_known(owner, _owners(project.products()), "--owner")
+    typer.echo(views.products(project, domain, owner))
 
 
 def list_contracts_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's contracts."),
     layer: str = typer.Option(None, "--layer", help="Only this layer's contracts: bronze, silver or gold."),
     product: str = typer.Option(None, "--product", help="Only this data product's contracts."),
+    owner: str = typer.Option(None, "--owner", help="Only contracts this team owns."),
     manifest_path: Path = _manifest_option(),
 ) -> None:
     """List contracts, bronze to gold, with each one's owner, data products
     and freshness SLA."""
     _check_known(layer, list(LAYERS), "--layer")
-    manifest = _manifest(manifest_path)
-    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
-    _check_known(product, sorted(p["name"] for p in manifest["dataProducts"]), "--product")
-    typer.echo(views.contracts(manifest, domain, layer, product))
+    project = _project(manifest_path)
+    _check_known(domain, [d["name"] for d in project.domains()], "--domain")
+    _check_known(product, [p["name"] for p in project.products()], "--product")
+    _check_known(owner, _owners(project.contracts()), "--owner")
+    typer.echo(views.contracts(project, domain, layer, product, owner))
 
 
 def list_terms_command(
@@ -169,9 +187,28 @@ def list_terms_command(
     manifest_path: Path = _manifest_option(),
 ) -> None:
     """List glossary terms, with each one's domain and definition."""
-    manifest = _manifest(manifest_path)
-    _check_known(domain, [d["name"] for d in manifest["domains"]], "--domain")
-    typer.echo(views.terms(manifest, domain))
+    project = _project(manifest_path)
+    _check_known(domain, [d["name"] for d in project.domains()], "--domain")
+    typer.echo(views.terms(project, domain))
+
+
+def list_columns_command(
+    domain: str = typer.Option(None, "--domain", help="Only this domain's columns."),
+    contract: str = typer.Option(None, "--contract", help="Only this contract's columns, by id."),
+    classification: list[str] = typer.Option(
+        None, "--classification", help="Only columns classified so: public, internal, pii or sensitive-pii. Repeatable."
+    ),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """List columns, bronze to gold, with each one's type, glossary term
+    and classification: e.g. where personal data is, with --classification
+    pii --classification sensitive-pii."""
+    for value in classification or []:
+        _check_known(value, list(CLASSIFICATIONS), "--classification")
+    project = _project(manifest_path)
+    _check_known(domain, [d["name"] for d in project.domains()], "--domain")
+    _check_known(contract, [c["id"] for c in project.contracts()], "--contract")
+    typer.echo(views.columns(project, domain, contract, classification or None))
 
 
 def show_command(
@@ -180,15 +217,26 @@ def show_command(
 ) -> None:
     """Show everything the repository says about one contract, data
     product, domain or glossary term."""
-    manifest = _manifest(manifest_path)
-    # A contract file by any path, as the other commands take one; the
-    # manifest knows it by its path from the repo root, here.
-    candidate, root = Path(name).resolve(), Path(".").resolve()
-    if candidate.is_file() and candidate.is_relative_to(root):
-        name = candidate.relative_to(root).as_posix()
-    shown = views.show(manifest, name)
+    project = _project(manifest_path)
+    name = _repo_relative(name)
+    shown = views.show(project, name)
     if shown is None:
         typer.echo(f"nothing named {name!r}: no contract, data product, domain or glossary term has that name", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(shown)
+
+
+def impact_command(
+    ref: str = typer.Argument(..., help="A contract (id or file), or one of its columns: <contract id>.<column>."),
+    manifest_path: Path = _manifest_option(),
+) -> None:
+    """List everything downstream of a contract or column, nearest first,
+    with who owns it: who to tell before changing it."""
+    project = _project(manifest_path)
+    ref = _repo_relative(ref)
+    shown = views.impact(project, ref)
+    if shown is None:
+        typer.echo(f"{ref!r} is neither a contract nor a column of one", err=True)
         raise typer.Exit(code=1)
     typer.echo(shown)
 
@@ -242,13 +290,17 @@ def build_app() -> typer.Typer:
     app.command(name="lint")(lint_command)
     app.command(name="export")(export_command)
     app.command(name="compile")(compile_command)
-    list_app = typer.Typer(help="List the repository's domains, data products, contracts or glossary terms.", no_args_is_help=True)
+    list_app = typer.Typer(
+        help="List the repository's domains, data products, contracts, glossary terms or columns.", no_args_is_help=True
+    )
     list_app.command(name="domains")(list_domains_command)
     list_app.command(name="products")(list_products_command)
     list_app.command(name="contracts")(list_contracts_command)
     list_app.command(name="terms")(list_terms_command)
+    list_app.command(name="columns")(list_columns_command)
     app.add_typer(list_app, name="list")
     app.command(name="show")(show_command)
+    app.command(name="impact")(impact_command)
     for register in _plugin_registrars():
         register(app)
 

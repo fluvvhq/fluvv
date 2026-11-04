@@ -49,6 +49,20 @@ FUNCTIONS = {
     "fluvv.lineage": {"combine_sql": "(sources, transform)"},
 }
 
+PROJECT_METHODS = {
+    "__init__": "(self, repo_root='.', manifest=None)",
+    "domains": "(self)",
+    "products": "(self, domain=None, owner=None)",
+    "contracts": "(self, domain=None, layer=None, product=None, owner=None)",
+    "terms": "(self, domain=None)",
+    "columns": "(self, domain=None, contract=None, classification=None)",
+    "domain": "(self, name)",
+    "product": "(self, name)",
+    "contract": "(self, ref)",
+    "term": "(self, name, domain=None)",
+    "impact": "(self, ref)",
+}
+
 EXCEPTIONS = {
     "fluvv.contract.RepoRootNotFoundError": FileNotFoundError,
     "fluvv.manifest.StaleManifestError": ValueError,
@@ -58,7 +72,7 @@ EXCEPTIONS = {
 
 EXPORTS = {
     "Contract", "ExportResult", "IngestionConfig", "LintResult", "FluvvExtension",
-    "Source", "Transform", "export_artifacts", "lint", "load_extension",
+    "Project", "Source", "Transform", "export_artifacts", "lint", "load_extension",
 }
 
 
@@ -76,6 +90,11 @@ def _parameters(function) -> str:
 )
 def test_supported_function_keeps_its_parameters(module, name, expected):
     assert _parameters(getattr(importlib.import_module(module), name)) == expected
+
+
+@pytest.mark.parametrize("name, expected", PROJECT_METHODS.items())
+def test_project_method_keeps_its_parameters(name, expected):
+    assert _parameters(getattr(fluvv.Project, name)) == expected
 
 
 @pytest.mark.parametrize("path, base", EXCEPTIONS.items())

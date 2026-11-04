@@ -62,8 +62,9 @@ customProperties:
 fluvv lint                                     # every contract and governance file; or name files/folders
 fluvv compile                                  # references between files, then -> target/manifest.json
 fluvv export contracts/silver/sales/cars.yaml  # Spark schema + resolved ingestion config
-fluvv list contracts --layer gold              # also: list domains | products | terms
+fluvv list contracts --layer gold              # also: list domains | products | terms | columns
 fluvv show gold.sales.cars                     # one contract, data product, domain or term, in full
+fluvv impact silver.sales.cars.price           # what's downstream of a table or column, and who owns it
 ```
 
 `lint` checks each file on its own: its JSON Schema, then what a schema
@@ -73,9 +74,11 @@ repository's files fit together (domains, glossary terms, upstream
 contracts and relationships all resolve) and then writes one manifest
 with every contract, the governance around it, and table- and
 column-level lineage derived from the transforms. If a reference is
-broken, it lists every one and writes nothing. `list` and `show` print
-what that manifest holds: who owns which domain, data product and
-contract, what each glossary term means and which columns use it.
+broken, it lists every one and writes nothing. `list`, `show` and
+`impact` print what that manifest holds: who owns which domain, data
+product and contract, what each glossary term means and which columns use
+it, where personal data is (`list columns --classification pii`), and
+what a change would reach downstream.
 
 ## In Python
 
@@ -86,6 +89,13 @@ contract = Contract("contracts/silver/sales/cars.yaml")
 contract.lint().passed   # True
 contract.test().result   # the table against the contract's schema and quality rules
 contract.lineage()       # {'upstream': ['bronze.sales.cars'], 'downstream': [...]}
+
+from fluvv import Project
+
+project = Project()                                  # the repository here, compiled
+project.contracts(layer="gold", owner="sales-analytics-team")
+project.columns(classification=("pii", "sensitive-pii"))
+project.impact("silver.sales.cars.price")            # [{'contract': 'gold.sales.cars', 'column': 'average_sale_price', 'via': [...]}, ...]
 ```
 
 ## Running contracts
@@ -106,7 +116,8 @@ a command option or a manifest key isn't a breaking change.
 - The contract and governance file formats, versioned by
   [the spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md).
 - The manifest: `manifestVersion` stays `"2"` and keys are only added.
-- Everything `fluvv` exports (`fluvv.__all__`), `Contract`'s `path`, `doc`
+- Everything `fluvv` exports (`fluvv.__all__`), including `Project`'s
+  methods and the manifest entries they return, `Contract`'s `path`, `doc`
   and `id`, and `fluvv.product.EngineRequiredError`.
 - For packages building on fluvv, such as Fluvv Engine, which relies on
   nothing else and so works with any fluvv of its major version:

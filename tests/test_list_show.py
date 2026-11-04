@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from fluvv import cli, views
+from fluvv import Project, cli, views
 from fluvv.manifest import write_manifest
 
 # A copy of the sales example project, so these tests pass from a checkout
@@ -60,6 +60,42 @@ def test_list_contracts_runs_bronze_to_gold_and_filters(run):
     assert silver[0] == ["silver.sales.cars", "sales-data-team", "-", "-"]
 
 
+def test_list_filters_by_owner(run):
+    data_team = [row[0] for row in _rows(run("list", "contracts", "--owner", "sales-data-team").output)[1:]]
+    assert data_team == [f"{layer}.sales.{table}" for layer in ("bronze", "silver") for table in ("cars", "employees", "locations")]
+    assert [row[0] for row in _rows(run("list", "products", "--owner", "sales-analytics-team").output)[1:]] == ["sales_reporting"]
+
+
+def test_list_columns_finds_personal_data(run):
+    result = run("list", "columns", "--classification", "pii", "--classification", "sensitive-pii")
+    assert result.exit_code == 0, result.output
+    rows = _rows(result.output)
+    assert rows[0] == ["CONTRACT", "COLUMN", "TYPE", "TERM", "CLASSIFICATION"]
+    assert ["bronze.sales.employees", "email", "string", "EmployeeEmail", "sensitive-pii"] in rows
+    assert {row[-1] for row in rows[1:]} == {"pii", "sensitive-pii"}
+    one = _rows(run("list", "columns", "--contract", "gold.sales.cars").output)[1:]
+    assert [row[1] for row in one] == ["dealership_location", "sale_month", "transaction_count", "total_sales_value", "average_sale_price", "unique_customers"]
+
+
+def test_impact_lists_what_is_downstream_with_its_owner(run):
+    result = run("impact", "bronze.sales.employees.email")
+    assert result.exit_code == 0, result.output
+    assert _rows(result.output) == [
+        ["DOWNSTREAM", "VIA", "OWNER", "PRODUCTS"],
+        ["silver.sales.employees.email", "bronze.sales.employees.email", "sales-data-team", "-"],
+        ["gold.sales.employees.email", "silver.sales.employees.email", "sales-analytics-team", "sales_reporting"],
+    ]
+    tables = [row[0] for row in _rows(run("impact", "contracts/silver/sales/cars.yaml").output)[1:]]
+    assert tables == ["gold.sales.cars", "gold.sales.dealership_performance"]
+
+
+def test_impact_of_an_unknown_reference_exits_non_zero(run):
+    for ref in ("gold.sales.cars.nope", "gold.sales.nope"):
+        result = run("impact", ref)
+        assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+        assert "neither a contract nor a column" in result.output
+
+
 def test_list_rejects_a_filter_naming_nothing_in_the_repo(run):
     for command, args, known in [
         ("contracts", ("--domain", "sale"), "sales"),
@@ -67,10 +103,14 @@ def test_list_rejects_a_filter_naming_nothing_in_the_repo(run):
         ("contracts", ("--product", "x"), "sales_reporting"),
         ("products", ("--domain", "sale"), "sales"),
         ("terms", ("--domain", "sale"), "sales"),
+        ("contracts", ("--owner", "nobody"), "sales-analytics-team, sales-data-team"),
+        ("products", ("--owner", "nobody"), "sales-analytics-team"),
+        ("columns", ("--classification", "secret"), "public, internal, pii, sensitive-pii"),
+        ("columns", ("--contract", "gold.sales.nope"), "gold.sales.cars"),
     ]:
         result = run("list", command, *args)
         assert result.exit_code == 2 and isinstance(result.exception, SystemExit), result.output  # a usage error
-        assert known in result.output
+        assert known in " ".join(result.output.replace("│", " ").split())  # the error box wraps long lines
 
 
 def test_a_domain_without_a_glossary_or_products_is_an_empty_list_not_an_error(prebuilt, tmp_path, monkeypatch):
@@ -143,20 +183,20 @@ def test_a_repo_that_does_not_compile_lists_nothing(tmp_path, monkeypatch):
     assert result.exit_code == 1 and "[not-a-repository]" in result.output
 
 
-def _manifest(**overrides) -> dict:
-    return {"domains": [], "dataProducts": [], "contracts": [], "glossaries": [], **overrides}
+def _project(**overrides) -> Project:
+    return Project(manifest={"domains": [], "dataProducts": [], "contracts": [], "glossaries": [], **overrides})
 
 
 def test_show_prints_every_kind_a_name_matches():
-    manifest = _manifest(
+    project = _project(
         domains=[{"name": "billing", "description": "Invoices.", "owner": "team-a", "experts": []}],
         dataProducts=[{"name": "billing", "domain": "billing", "description": {"purpose": "Billing reports."}, "owner": "team-a", "experts": [], "contracts": []}],
     )
-    shown = views.show(manifest, "billing")
+    shown = views.show(project, "billing")
     assert shown.startswith("billing (domain)\n") and "\n\nbilling (data product)\n" in shown
-    assert views.show(manifest, "nope") is None
+    assert views.show(project, "nope") is None
 
 
 def test_a_multi_line_definition_stays_on_its_row():
-    manifest = _manifest(glossaries=[{"domain": "d", "terms": [{"name": "Net", "definition": "Gross less\nrefunds.\n", "synonyms": [], "relatedTerms": []}]}])
-    assert views.terms(manifest).splitlines()[1:] == ["Net   d       Gross less refunds."]
+    project = _project(glossaries=[{"domain": "d", "terms": [{"name": "Net", "definition": "Gross less\nrefunds.\n", "synonyms": [], "relatedTerms": []}]}])
+    assert views.terms(project).splitlines()[1:] == ["Net   d       Gross less refunds."]
