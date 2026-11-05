@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
-import typer
 from typer.testing import CliRunner
 
 from fluvv import Project, cli, views
@@ -112,7 +112,8 @@ def test_list_rejects_a_filter_naming_nothing_in_the_repo(run):
         result = run("list", command, *args)
         assert result.exit_code == 2 and isinstance(result.exception, SystemExit), result.output  # a usage error
         # The error box wraps long lines, and GitHub Actions turns color on inside it.
-        assert known in " ".join(typer.unstyle(result.output).replace("│", " ").split())
+        text = re.sub(r"\x1b\[[0-9;]*m", "", result.output).replace("│", " ")
+        assert known in " ".join(text.split())
 
 
 def test_a_domain_without_a_glossary_or_products_is_an_empty_list_not_an_error(prebuilt, tmp_path, monkeypatch):
