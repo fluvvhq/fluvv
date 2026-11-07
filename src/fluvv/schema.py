@@ -1,6 +1,7 @@
 """JSON Schema validation: Fluvv customProperties against
-fluvv/schemas/fluvv.schema.json, and governance files against their own
-schema (domain, glossary, or the vendored ODPS v1.1.0 schema)."""
+fluvv/schemas/fluvv.schema.json, and governance files and the project file
+against their own schema (domain, glossary, classifications, project, or
+the vendored ODPS v1.1.0 schema)."""
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from typing import Any
 
 import jsonschema
 
-from fluvv.contract import FLUVV_CUSTOM_PROPERTIES, OPTIONAL_FLUVV_CUSTOM_PROPERTIES, get_custom_property
+from fluvv.contract import FLUVV_CUSTOM_PROPERTIES, LAYER_PROPERTIES, OPTIONAL_FLUVV_CUSTOM_PROPERTIES, PROJECT_KIND, get_custom_property
 
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 SCHEMA_PATH = SCHEMAS_DIR / "fluvv.schema.json"
@@ -22,13 +23,18 @@ _DEFINITION_BY_PROPERTY = {
     "transform": "Transform",
     "ingestion_config": "IngestionConfig",
     "businessMetrics": "BusinessMetrics",
+    **{property_name: "Layer" for property_name in LAYER_PROPERTIES},
 }
 _SCHEMA_FILE_BY_KIND = {
     "Domain": "domain.schema.json",
     "Glossary": "glossary.schema.json",
+    "Classifications": "classifications.schema.json",
     "DataProduct": "odps-1.1.0.schema.json",
+    PROJECT_KIND: "project.schema.json",
 }
-GOVERNANCE_KINDS = tuple(_SCHEMA_FILE_BY_KIND)
+SCHEMA_KINDS = tuple(_SCHEMA_FILE_BY_KIND)
+"""Every file lint checks against a schema of its own, rather than as a contract."""
+GOVERNANCE_KINDS = tuple(kind for kind in SCHEMA_KINDS if kind != PROJECT_KIND)
 
 
 @lru_cache(maxsize=None)
@@ -62,8 +68,8 @@ def validate_custom_property(
 
 
 def validate_governance_document(doc: dict[str, Any]) -> list[jsonschema.exceptions.ValidationError]:
-    """Validate a governance file against the schema for its `kind`, which
-    must be one of GOVERNANCE_KINDS."""
+    """Validate a governance file or the project file against the schema
+    for its `kind`, which must be one of SCHEMA_KINDS."""
     return sorted(_governance_validator(doc["kind"]).iter_errors(doc), key=str)
 
 
@@ -83,6 +89,11 @@ def custom_property_errors(doc: dict[str, Any]) -> list[str]:
         value = get_custom_property(doc, property_name)
         if value is not None:
             errors += [f"{property_name}: {error.message}" for error in validate_custom_property(property_name, value)]
+    for property_name in LAYER_PROPERTIES:
+        value = get_custom_property(doc, property_name)
+        if value is not None:
+            errors += [f"{property_name}: {error.message}" for error in validate_custom_property(property_name, value)]
+            break  # only the one in use is the layer (fluvv.contract.LAYER_PROPERTIES)
     return errors
 
 

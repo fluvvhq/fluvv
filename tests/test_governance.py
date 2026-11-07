@@ -82,14 +82,26 @@ def test_contract_must_reference_a_known_domain_and_not_define_its_product():
     assert [i.code for i in governance.contract_issues(doc)] == ["data-product-in-contract"]  # the file alone shows it
 
 
-def test_contract_issues_flag_bad_classification_retention_and_leftover_related_terms():
+def test_contract_issues_flag_bad_retention_and_leftover_related_terms():
     doc = _doc(
         "gold",
-        [{"name": "a", "classification": "secret"}, {"name": "b", "customProperties": [{"property": "relatedTerms", "value": ["X"]}]}],
+        [{"name": "a"}, {"name": "b", "customProperties": [{"property": "relatedTerms", "value": ["X"]}]}],
         slaProperties=[{"property": "retention", "value": "90", "unit": "d"}],
     )
     codes = sorted(i.code for i in governance.contract_issues(doc))
-    assert codes == ["invalid-retention", "related-terms-in-contract", "unknown-classification"]
+    assert codes == ["invalid-retention", "related-terms-in-contract"]
+
+
+def test_a_classification_must_be_in_the_repositorys_vocabulary():
+    doc = _doc("gold", [{"name": "a", "classification": "secret"}, {"name": "b", "classification": "pii"}])
+    issues = governance.contract_reference_issues(doc, _gov())
+    assert [i.code for i in issues] == ["unknown-classification"]
+    assert "'secret' is not one of ['public', 'internal', 'pii', 'sensitive-pii']" in issues[0].message
+
+    own = _gov()
+    own.classifications = {"secret": None}
+    codes = [i.code for i in governance.contract_reference_issues(doc, own)]
+    assert codes == ["unknown-classification"]  # now `pii` is the one that isn't
 
 
 def test_glossary_related_terms_must_exist_in_the_glossary():

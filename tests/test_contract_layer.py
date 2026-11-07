@@ -267,16 +267,16 @@ def test_compile_reports_one_missing_domain_once(tmp_path):
     assert report.count("[unknown-domain]") == 1 and "in 12 files: contracts/bronze/sales/cars.yaml, " in report
 
 
-def test_compile_checks_each_contract_sits_where_its_id_says(tmp_path):
+def test_a_contract_can_sit_anywhere_under_the_contracts_folder(tmp_path):
     repo = tmp_path / "repo"
     shutil.copytree(EXAMPLE, repo)
-    (repo / "contracts/bronze/sales/cars.yaml").rename(repo / "contracts/bronze/sales/vehicles.yaml")
-    for rel in ("contracts/silver/sales/cars.yaml",):
-        path = repo / rel
-        path.write_text(path.read_text().replace("contracts/bronze/sales/cars.yaml", "contracts/bronze/sales/vehicles.yaml"))
-    with pytest.raises(ProjectCheckError) as excinfo:
-        manifest.compile_manifest(repo)
-    assert [(i.path, i.code) for i in excinfo.value.issues] == [("contracts/bronze/sales/vehicles.yaml", "contract-naming-mismatch")]
+    (repo / "contracts/ingest").mkdir()
+    (repo / "contracts/bronze/sales/cars.yaml").rename(repo / "contracts/ingest/vehicles.yaml")
+    path = repo / "contracts/silver/sales/cars.yaml"
+    path.write_text(path.read_text().replace("contracts/bronze/sales/cars.yaml", "contracts/ingest/vehicles.yaml"))
+    compiled = {c["id"]: c for c in manifest.compile_manifest(repo)["contracts"]}
+    assert compiled["bronze.sales.cars"]["path"] == "contracts/ingest/vehicles.yaml"
+    assert compiled["silver.sales.cars"]["upstream"] == ["bronze.sales.cars"]
 
 
 # --- manifest -----------------------------------------------------------------------

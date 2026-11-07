@@ -7,23 +7,27 @@ On one file alone (`fluvv lint`, needs no repository):
 - each per-source transform references only its own source; the
   contract-level transform references only declared sources, and exists
   whenever there's more than one source.
-- the contract's own fields are valid (classification, retention,
-  freshness, the v3.1.0 team object), its id agrees with its
-  `medallionLayer` and `domain`, its relationships start from its own
-  columns, and it doesn't define shared things; a glossary's related terms
-  are its own, a data product has an owner (fluvv.governance).
+- the contract's own fields are valid (retention, freshness, the v3.1.0
+  team object, an id), its relationships start from its own columns, and it
+  doesn't define shared things; a glossary's related terms are its own, a
+  data product has an owner (fluvv.governance).
 
 On the repository as a whole (`fluvv compile`), once every file loads and
 passes lint's structural checks (YAML, Fluvv customProperties, id):
-- sources[].contract paths resolve to a contract file, each contract sits
-  at the path its id names, and relationships point at existing, unique
-  columns.
-- references to shared entities resolve: domains, glossary terms, and
-  the contracts a data product's output ports name.
+- sources[].contract paths resolve to a contract file, relationships point
+  at existing, unique columns, and sources form no cycle.
+- references to shared entities resolve: domains, glossary terms,
+  classifications, and the contracts a data product's output ports name.
+- no two contracts claim the same id or table, and no two files define the
+  same glossary or classification list.
+
+These are the rules that keep Fluvv correct. How a repository names, lays
+out and layers its contracts is otherwise its own choice.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -35,7 +39,18 @@ import yaml
 from pydantic import ValidationError
 
 from fluvv import governance
-from fluvv.contract import MissingCustomPropertyError, load_odcs_document, parse_extension, yaml_problem
+from fluvv.contract import (
+    PROJECT_FILE,
+    PROJECT_KIND,
+    MissingCustomPropertyError,
+    contract_files,
+    get_custom_property,
+    governance_files,
+    load_odcs_document,
+    parse_extension,
+    project_layout,
+    yaml_problem,
+)
 from fluvv.models import FluvvExtension
 from fluvv.schema import GOVERNANCE_KINDS, custom_property_errors, odcs_errors, validate_governance_document
 
@@ -176,6 +191,7 @@ def check_contract_fields(doc: dict[str, Any]) -> list[SemanticIssue]:
         for issue in (
             *governance.contract_issues(doc),
             *governance.id_issues(doc),
+            *governance.domain_name_issues(doc),
             *governance.relationship_shape_issues(doc),
         )
     ]
@@ -219,30 +235,52 @@ def _contract_problem(doc: Any, path: Path) -> str | None:
         parse_extension(doc, path)
     except (MissingCustomPropertyError, ValidationError) as exc:
         return str(exc).splitlines()[0]
-    if issues := governance.id_issues(doc):
+    if issues := [*governance.id_issues(doc), *governance.domain_name_issues(doc)]:
         return issues[0].message
     return None
 
 
-def _governance_file_problem(raw: Any) -> str | None:
+def _schema_file_problem(raw: Any, kinds: tuple[str, ...]) -> str | None:
     if not isinstance(raw, dict):
         return "the file is empty or isn't a YAML mapping"
-    if raw.get("kind") not in GOVERNANCE_KINDS:
-        return f"kind {raw.get('kind')!r} isn't one of {list(GOVERNANCE_KINDS)}"
+    if raw.get("kind") not in kinds:
+        return f"kind {raw.get('kind')!r} isn't one of {list(kinds)}"
     if errors := validate_governance_document(raw):
         return f"{'/'.join(map(str, errors[0].absolute_path)) or '(root)'}: {errors[0].message}"
     return None
+
+
+def _project_file_issues(repo_root: Path) -> list[ProjectIssue]:
+    """Everything else depends on where the project file says files live. A
+    folder that isn't there would otherwise compile as nothing to check, and
+    a repository with a mistyped one would pass having looked at nothing."""
+    path = repo_root / PROJECT_FILE
+    if not path.is_file():
+        return []
+    try:
+        raw = load_odcs_document(path)
+        problem = _schema_file_problem(raw, (PROJECT_KIND,))
+    except yaml.YAMLError as exc:
+        problem = yaml_problem(exc)
+    if problem:
+        return [ProjectIssue(PROJECT_FILE, "fails-lint", f"doesn't pass lint ({problem}); run `fluvv lint {PROJECT_FILE}`")]
+    layout = project_layout(repo_root)
+    contracts, governance_dir = Path(layout.contracts), Path(layout.governance)
+    problems = [f"the {key} folder '{raw[key]}' doesn't exist" for key in ("contracts", "governance") if key in raw and not (repo_root / raw[key]).is_dir()]
+    if contracts.is_relative_to(governance_dir) or governance_dir.is_relative_to(contracts):
+        problems.append(f"the contracts folder '{contracts}' and the governance folder '{governance_dir}' overlap")
+    return [ProjectIssue(PROJECT_FILE, "invalid-project-folder", problem) for problem in problems]
 
 
 def unfit_files(repo_root: Path) -> list[ProjectIssue]:
     """Files compile can't judge references in: ones that don't load, or
     fail lint's structural checks. Each is reported with its first problem."""
     issues = []
-    for pattern, first_problem in (
-        ("contracts/**/*.yaml", _contract_problem),
-        (f"{governance.GOVERNANCE_DIR}/**/*.yaml", lambda raw, _path: _governance_file_problem(raw)),
+    for paths, first_problem in (
+        (contract_files(repo_root), _contract_problem),
+        (governance_files(repo_root), lambda raw, _path: _schema_file_problem(raw, GOVERNANCE_KINDS)),
     ):
-        for path in sorted(repo_root.glob(pattern)):
+        for path in paths:
             rel = path.relative_to(repo_root).as_posix()
             try:
                 problem = first_problem(load_odcs_document(path), path)
@@ -253,20 +291,105 @@ def unfit_files(repo_root: Path) -> list[ProjectIssue]:
     return issues
 
 
+def _distinct_contract_issues(docs_by_path: dict[Path, dict[str, Any]], repo_root: Path) -> list[ProjectIssue]:
+    """No two contracts may claim one id, or one table. Ids and paths are
+    free, so nothing else keeps them apart, and a shared table means each
+    run overwrites the other's data, run records or catalog entry. A table
+    goes by its location, and by its name with its layer and domain. Except
+    for contracts that all append to one location: they fan in to one table,
+    and nothing is lost."""
+
+    def target(doc: dict[str, Any]) -> str | None:
+        path = (doc.get("servers") or [{}])[0].get("path")
+        return os.path.normpath(path) if path else None
+
+    def fans_in(paths: list[Path]) -> bool:
+        docs = [docs_by_path[path] for path in paths]
+        targets = {target(doc) for doc in docs}
+        return len(targets) == 1 and None not in targets and all(
+            (get_custom_property(doc, "ingestion_config") or {}).get("mode") == "append" for doc in docs
+        )
+
+    groups: dict[tuple[str, str], list[Path]] = {}
+    for path, doc in docs_by_path.items():
+        groups.setdefault(("duplicate-contract-id", f"id '{doc['id']}' is used by more than one contract"), []).append(path)
+        if target(doc):
+            groups.setdefault(("duplicate-target", f"more than one contract writes to '{target(doc)}', and not all of them append"), []).append(path)
+        layer, domain, table = governance.medallion_layer(doc), doc.get("domain"), governance.schema_object(doc)["name"]
+        groups.setdefault(("duplicate-target", f"more than one contract has table name '{table}', layer {layer!r} and domain {domain!r}"), []).append(path)
+    return [
+        ProjectIssue(path.relative_to(repo_root).as_posix(), code, message)
+        for (code, message), paths in groups.items()
+        if len(paths) > 1 and not (code == "duplicate-target" and fans_in(paths))
+        for path in paths
+    ]
+
+
+def _source_cycle_issues(docs_by_path: dict[Path, dict[str, Any]], repo_root: Path) -> list[ProjectIssue]:
+    """Sources may flow in any direction except back to themselves: a table
+    upstream of itself can't be built from nothing."""
+    upstream = {
+        path: [
+            target
+            for source in get_custom_property(doc, "sources") or []
+            if source.get("contract") and (target := (repo_root / source["contract"]).resolve()) in docs_by_path
+        ]
+        for path, doc in docs_by_path.items()
+    }
+    cycles: list[list[Path]] = []
+    finished: set[Path] = set()
+
+    def visit(path: Path, trail: list[Path]) -> None:
+        if path in trail:
+            cycles.append(trail[trail.index(path):])
+        elif path not in finished:
+            for target in upstream[path]:
+                visit(target, [*trail, path])
+            finished.add(path)
+
+    for path in docs_by_path:
+        visit(path, [])
+    issues = []
+    for cycle in cycles:
+        names = [docs_by_path[path]["id"] for path in (*cycle, cycle[0])]
+        message = f"sources form a cycle: {' reads '.join(names)}"
+        issues += [ProjectIssue(path.relative_to(repo_root).as_posix(), "source-cycle", message) for path in cycle]
+    return issues
+
+
+def _duplicate_definition_issues(documents: dict[Path, dict[str, Any]], repo_root: Path) -> list[ProjectIssue]:
+    """Only one file can define each of these, and reading two would quietly
+    lose what the other says."""
+    defined: dict[str, list[Path]] = {}
+    for path, raw in documents.items():
+        if raw.get("kind") == governance.GLOSSARY_KIND:
+            what = f"the glossary of domain '{raw['domain']}'" if raw.get("domain") else "the shared glossary"
+            defined.setdefault(what, []).append(path)
+        elif raw.get("kind") == governance.CLASSIFICATIONS_KIND:
+            defined.setdefault("the classifications", []).append(path)
+    return [
+        ProjectIssue(path.relative_to(repo_root).as_posix(), "duplicate-definition", f"more than one file defines {what}")
+        for what, paths in defined.items()
+        if len(paths) > 1
+        for path in paths
+    ]
+
+
 def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
-    """Every reference between the repository's files. Stops at files that
-    don't pass lint's structural checks: references into a broken file
-    can't be judged, and checking around it would report every column of a
-    broken glossary as an unknown term."""
+    """Everything that makes the repository's files fit together. Stops at
+    files that don't pass lint's structural checks: references into a broken
+    file can't be judged, and checking around it would report every column
+    of a broken glossary as an unknown term."""
     repo_root = Path(repo_root).resolve()
-    if not any(repo_root.glob("contracts/**/*.yaml")) and not any(repo_root.glob(f"{governance.GOVERNANCE_DIR}/**/*.yaml")):
+    if project_file_issues := _project_file_issues(repo_root):
+        return project_file_issues
+    if not contract_files(repo_root) and not governance_files(repo_root):
         return [ProjectIssue(
             ".", "not-a-repository",
             f"no contract or governance files here ({repo_root}); run compile from the repository root",
         )]
     if unfit := unfit_files(repo_root):
         return unfit
-    contracts_dir = repo_root / "contracts"
     gov = governance.load_governance(repo_root)
     docs_by_path = governance.load_contracts(repo_root)
     contract_ids = {doc.get("id") for doc in docs_by_path.values()}
@@ -281,14 +404,17 @@ def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
         found += [
             SemanticIssue(issue.code, issue.message)
             for issue in (
-                *governance.contract_path_issues(doc, path.relative_to(contracts_dir).parts),
                 *governance.relationship_target_issues(doc, repo_root),
                 *governance.contract_reference_issues(doc, gov),
             )
         ]
         issues += [ProjectIssue(path.relative_to(repo_root).as_posix(), i.code, i.message) for i in found]
+    issues += _distinct_contract_issues(docs_by_path, repo_root)
+    issues += _source_cycle_issues(docs_by_path, repo_root)
 
-    for path, raw in governance.load_governance_documents(repo_root).items():
+    documents = governance.load_governance_documents(repo_root)
+    issues += _duplicate_definition_issues(documents, repo_root)
+    for path, raw in documents.items():
         kind = raw.get("kind")
         if kind == governance.GLOSSARY_KIND:
             found_gov = governance.glossary_reference_issues(governance.parse_glossary(raw), gov)

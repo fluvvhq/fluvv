@@ -20,17 +20,20 @@ pip install fluvv
 
 ## A contract
 
-A repository keeps one contract per table at
-`contracts/<layer>/<domain>/<table>.yaml`, and the things contracts share
-(domains, glossaries, and ODPS v1.1.0 data products) under `governance/`.
-Abridged:
+A repository keeps one contract per table anywhere under `contracts/`, and
+the things contracts share (domains, glossaries, and ODPS v1.1.0 data
+products) under `governance/`. Fluvv enforces what keeps it correct:
+references resolve, each contract has its own id and table, and sources
+don't form a cycle. Layers, naming and layout are yours to choose; the
+[spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md) lists
+them. Abridged, with the choices the example repository makes:
 
 ```yaml
 apiVersion: v3.1.0
 kind: DataContract
 id: silver.sales.cars
 name: sales_cars_silver
-domain: sales                    # defined in governance/domains/sales.yaml
+domain: sales                    # optional; defined in governance/domains/sales.yaml
 schema:
   - name: sales_cars_silver
     properties:
@@ -39,7 +42,7 @@ schema:
         primaryKey: true
         logicalType: string
 customProperties:
-  - property: medallionLayer
+  - property: layer              # optional, and any name you like
     value: silver
   - property: sources            # where the data comes from
     value:
@@ -70,8 +73,9 @@ fluvv impact silver.sales.cars.price           # what's downstream of a table or
 `lint` checks each file on its own: its JSON Schema, then what a schema
 can't express, such as transform SQL that reads only declared sources. It
 needs nothing but the file, so it runs anywhere. `compile` checks that the
-repository's files fit together (domains, glossary terms, upstream
-contracts and relationships all resolve) and then writes one manifest
+repository's files fit together (domains, glossary terms, classifications,
+upstream contracts and relationships all resolve, and no two contracts
+claim one id or table) and then writes one manifest
 with every contract, the governance around it, and table- and
 column-level lineage derived from the transforms. If a reference is
 broken, it lists every one and writes nothing. `list`, `show` and

@@ -20,16 +20,32 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fluvv.contract import get_custom_property, load_odcs_document
+from fluvv.contract import (
+    LAYER_PROPERTIES,
+    contract_files,
+    get_custom_property,
+    governance_files,
+    load_odcs_document,
+    project_layout,
+)
 
-CLASSIFICATIONS = ("public", "internal", "pii", "sensitive-pii")
-"""Allowed values for a column's ODCS `classification` (SPEC.md Section 4)."""
-LAYERS = ("bronze", "silver", "gold")
-"""Allowed `medallionLayer` values, in upstream-to-downstream order."""
+DEFAULT_CLASSIFICATIONS = {
+    "public": "PII.None",
+    "internal": "PII.None",
+    "pii": "PII.NonSensitive",
+    "sensitive-pii": "PII.Sensitive",
+}
+"""Each allowed value of a column's ODCS `classification` and the tag it
+becomes in a catalog, unless the repository defines its own list (SPEC.md
+Section 5.4)."""
+MEDALLION_LAYERS = ("bronze", "silver", "gold")
+"""Not a rule any more, but what 1.x promised for these names keeps holding:
+they sort in this order, and `--layer` takes them even where no contract has
+them."""
 
-GOVERNANCE_DIR = "governance"
 DOMAIN_KIND = "Domain"
 GLOSSARY_KIND = "Glossary"
+CLASSIFICATIONS_KIND = "Classifications"
 DATA_PRODUCT_KIND = "DataProduct"
 
 _ISO_UNIT_BY_SLA_UNIT = {
@@ -52,13 +68,18 @@ _HOURS_BY_FRESHNESS_UNIT = {"H": 1, "D": 24, "W": 24 * 7}
 
 
 def load_contracts(repo_root: Path | str = ".") -> dict[Path, dict[str, Any]]:
-    """Every `contracts/**/*.yaml` under `repo_root`, keyed by resolved path."""
-    repo_root = Path(repo_root)
-    return {path.resolve(): load_odcs_document(path) for path in sorted(repo_root.glob("contracts/**/*.yaml"))}
+    """Every contract under `repo_root`, keyed by resolved path."""
+    return {path.resolve(): load_odcs_document(path) for path in contract_files(repo_root)}
 
 
-def medallion_layer(doc: dict[str, Any]) -> str:
-    return get_custom_property(doc, "medallionLayer")
+def medallion_layer(doc: dict[str, Any]) -> str | None:
+    """The contract's layer label, if it has one (`fluvv.contract.
+    LAYER_PROPERTIES`). Keeps this name because it's supported API."""
+    for name in LAYER_PROPERTIES:
+        value = get_custom_property(doc, name)
+        if value is not None:
+            return value
+    return None
 
 
 def schema_object(doc: dict[str, Any]) -> dict[str, Any]:
@@ -206,10 +227,10 @@ def resolve_reference(ref: str, doc: dict[str, Any], repo_root: Path) -> tuple[d
     return target_doc, prop
 
 
-def by_domain(docs: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
+def by_domain(docs: list[dict[str, Any]]) -> dict[str | None, list[dict[str, Any]]]:
+    grouped: dict[str | None, list[dict[str, Any]]] = {}
     for doc in docs:
-        grouped.setdefault(doc["domain"], []).append(doc)
+        grouped.setdefault(doc.get("domain"), []).append(doc)
     return grouped
 
 
@@ -239,7 +260,8 @@ class GlossaryTerm:
 
 @dataclass
 class Glossary:
-    domain: str
+    domain: str | None
+    """None for the shared glossary, which every contract can use."""
     description: str | None
     terms: dict[str, GlossaryTerm]
     path: Path | None = None
@@ -263,9 +285,13 @@ class DataProduct:
 @dataclass
 class Governance:
     domains: dict[str, Domain] = field(default_factory=dict)
-    glossaries: dict[str, Glossary] = field(default_factory=dict)
-    """Keyed by domain."""
+    glossaries: dict[str | None, Glossary] = field(default_factory=dict)
+    """Keyed by domain; None is the shared glossary."""
     products: dict[str, DataProduct] = field(default_factory=dict)
+    classifications: dict[str, str | None] = field(default_factory=lambda: dict(DEFAULT_CLASSIFICATIONS))
+    """Each allowed `classification` and its catalog tag, if any."""
+    directory: str = "governance"
+    """The repository's governance folder, for messages that name a file to add."""
 
 
 def parse_domain(raw: dict[str, Any], path: Path | None = None) -> Domain:
@@ -277,7 +303,11 @@ def parse_glossary(raw: dict[str, Any], path: Path | None = None) -> Glossary:
         t["name"]: GlossaryTerm(t["name"], t["definition"], list(t.get("synonyms") or []), list(t.get("relatedTerms") or []))
         for t in raw.get("terms") or []
     }
-    return Glossary(raw["domain"], raw.get("description"), terms, path)
+    return Glossary(raw.get("domain"), raw.get("description"), terms, path)
+
+
+def parse_classifications(raw: dict[str, Any]) -> dict[str, str | None]:
+    return {value["name"]: value.get("catalogTag") for value in raw.get("values") or []}
 
 
 def parse_data_product(raw: dict[str, Any], path: Path | None = None) -> DataProduct:
@@ -294,17 +324,16 @@ def parse_data_product(raw: dict[str, Any], path: Path | None = None) -> DataPro
 
 
 def load_governance_documents(repo_root: Path | str = ".") -> dict[Path, dict[str, Any]]:
-    """Every `governance/**/*.yaml` under `repo_root`, keyed by resolved path."""
-    repo_root = Path(repo_root)
-    return {path.resolve(): load_odcs_document(path) for path in sorted((repo_root / GOVERNANCE_DIR).glob("**/*.yaml"))}
+    """Every governance file under `repo_root`, keyed by resolved path."""
+    return {path.resolve(): load_odcs_document(path) for path in governance_files(repo_root)}
 
 
 def load_governance(repo_root: Path | str = ".") -> Governance:
-    """Domains, glossaries and Data Products, dispatched on each file's
-    `kind` (the `governance/domains|glossaries|products` folders are a
-    convention, not a requirement). Assumes the files are schema-valid --
-    lint is where they're validated."""
-    gov = Governance()
+    """Domains, glossaries, classifications and Data Products, dispatched on
+    each file's `kind` (the `governance/domains|glossaries|products` folders
+    are a convention, not a requirement). Assumes the files are schema-valid
+    -- lint is where they're validated."""
+    gov = Governance(directory=project_layout(repo_root).governance)
     for path, raw in load_governance_documents(repo_root).items():
         kind = (raw or {}).get("kind")
         if kind == DOMAIN_KIND:
@@ -313,27 +342,38 @@ def load_governance(repo_root: Path | str = ".") -> Governance:
         elif kind == GLOSSARY_KIND:
             glossary = parse_glossary(raw, path)
             gov.glossaries[glossary.domain] = glossary
+        elif kind == CLASSIFICATIONS_KIND:
+            gov.classifications = parse_classifications(raw)
         elif kind == DATA_PRODUCT_KIND:
             product = parse_data_product(raw, path)
             gov.products[product.name] = product
     return gov
 
 
-def glossary(gov: Governance, domain: str, docs: list[dict[str, Any]]) -> dict[str, GlossaryTerm]:
-    """The domain's glossary terms, with synonyms extended by derivation:
-    every physical column name a contract in `docs` uses for the term,
-    other than the term's own snake_case form (bronze `year` ->
-    `ModelYear` gets synonym `year`)."""
+def resolve_term(gov: Governance, domain: str | None, name: str) -> Glossary | None:
+    """The glossary a column's `businessName` resolves in: its contract's
+    domain's, then the shared one."""
+    for key in (domain, None):
+        found = gov.glossaries.get(key)
+        if found is not None and name in found.terms:
+            return found
+    return None
+
+
+def glossary(gov: Governance, domain: str | None, docs: list[dict[str, Any]]) -> dict[str, GlossaryTerm]:
+    """A glossary's terms (`domain` None for the shared one), with synonyms
+    extended by derivation: every physical column name a contract in `docs`
+    uses for the term, other than the term's own snake_case form (bronze
+    `year` -> `ModelYear` gets synonym `year`)."""
     defined = gov.glossaries.get(domain)
     if defined is None:
         return {}
     physical: dict[str, set[str]] = {}
     for doc in docs:
-        if doc["domain"] != domain:
-            continue
         for prop in columns(doc):
-            if prop.get("businessName"):
-                physical.setdefault(prop["businessName"], set()).add(prop["name"])
+            name = prop.get("businessName")
+            if name and resolve_term(gov, doc.get("domain"), name) is defined:
+                physical.setdefault(name, set()).add(prop["name"])
     terms = {}
     for name, term in defined.terms.items():
         derived = physical.get(name, set()) - {_snake(name)}
@@ -384,17 +424,11 @@ def contract_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
             "instead of a list with a `role: owner` entry",
         ))
     for prop in columns(doc):
-        value = prop.get("classification")
-        if value is not None and value not in CLASSIFICATIONS:
-            issues.append(GovernanceIssue(
-                "unknown-classification",
-                f"column '{prop['name']}': classification '{value}' is not one of {list(CLASSIFICATIONS)}",
-            ))
         if get_custom_property(prop, "relatedTerms") is not None:
             issues.append(GovernanceIssue(
                 "related-terms-in-contract",
                 f"column '{prop['name']}': relatedTerms relate glossary terms to each other, not columns; "
-                f"move them to the term in {GOVERNANCE_DIR}/glossaries/{doc.get('domain')}.yaml",
+                "move them to the term in its glossary",
             ))
     for entry in doc.get("slaProperties") or []:
         if entry.get("property") == "retention" and retention_period(doc) is None:
@@ -411,47 +445,27 @@ def contract_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
         issues.append(GovernanceIssue(
             "data-product-in-contract",
             f"dataProduct '{doc['dataProduct']}': Data Product membership is defined by the product, not the table; "
-            f"remove it here and list contract '{doc.get('id')}' under the product's `outputPorts` in {GOVERNANCE_DIR}/products/",
+            f"remove it here and list contract '{doc.get('id')}' under the product's `outputPorts`",
         ))
     return issues
 
 
-def naming_issues(doc: dict[str, Any], relative_path: tuple[str, ...] | None) -> list[GovernanceIssue]:
-    """`medallionLayer` and `domain` are the source of truth; the contract
-    `id` (`<layer>.<domain>.<name>`) and its path under `contracts/`
-    (`<layer>/<domain>/<name>.yaml`) must agree with them.
-    `relative_path`: the path's parts below `contracts/`, if it's there."""
-    issues = id_issues(doc)
-    if not issues and relative_path is not None:
-        issues = contract_path_issues(doc, relative_path)
-    return issues
-
-
 def id_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
-    """The part of `naming_issues` that needs only the contract itself."""
-    layer, domain, contract_id = medallion_layer(doc), doc.get("domain"), str(doc.get("id", ""))
-    if layer not in LAYERS:
-        return [GovernanceIssue("unknown-medallion-layer", f"medallionLayer '{layer}' is not one of {list(LAYERS)}")]
-    parts = contract_id.split(".")
-    if len(parts) != 3 or parts[0] != layer or parts[1] != domain:
-        return [GovernanceIssue(
-            "contract-naming-mismatch",
-            f"id '{contract_id}' must be '{layer}.{domain}.<name>' (medallionLayer.domain.name)",
-        )]
+    """An `id` is how everything else names a contract, so one must exist.
+    Its shape is free; that it's unique is compile's to check."""
+    contract_id = doc.get("id")
+    if not isinstance(contract_id, str) or not contract_id:
+        return [GovernanceIssue("missing-contract-id", "a contract needs an `id`: a non-empty string that names it")]
     return []
 
 
-def contract_path_issues(doc: dict[str, Any], relative_path: tuple[str, ...]) -> list[GovernanceIssue]:
-    """The part of `naming_issues` that needs the file's place in the
-    repository. Silent while the id itself is wrong: that's `id_issues`."""
-    if id_issues(doc):
-        return []
-    layer, domain, name = str(doc["id"]).split(".")
-    if tuple(relative_path) != (layer, domain, f"{name}.yaml"):
-        return [GovernanceIssue(
-            "contract-naming-mismatch",
-            f"contract '{doc['id']}' must live at contracts/{layer}/{domain}/{name}.yaml, not contracts/{'/'.join(relative_path)}",
-        )]
+def domain_name_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
+    """A contract's domain can become a folder and a catalog level, like its
+    layer. On the contract, not the Domain file: 1.x refused a contract with
+    such a domain, through its id and path, but not a Domain file."""
+    domain = doc.get("domain")
+    if isinstance(domain, str) and re.search(r"[./\\]", domain):
+        return [GovernanceIssue("invalid-domain-name", f"domain '{domain}' can't contain `.`, `/` or `\\`: it can become a folder and a catalog level")]
     return []
 
 
@@ -502,30 +516,38 @@ def relationship_target_issues(doc: dict[str, Any], repo_root: Path) -> list[Gov
     return issues
 
 
-def unknown_domain(domain: str) -> GovernanceIssue:
+def unknown_domain(domain: str, gov: Governance) -> GovernanceIssue:
     """Worded the same for a contract, glossary or product, so a missing
     domain file is reported once with every file that names it."""
     return GovernanceIssue(
         "unknown-domain",
-        f"domain '{domain}' has no domain file; add {GOVERNANCE_DIR}/domains/{domain}.yaml (kind: {DOMAIN_KIND})",
+        f"domain '{domain}' has no domain file; add {gov.directory}/domains/{domain}.yaml (kind: {DOMAIN_KIND})",
     )
 
 
 def contract_reference_issues(doc: dict[str, Any], gov: Governance) -> list[GovernanceIssue]:
     """The contract's references to shared entities must resolve. (That it
-    doesn't define them itself is `contract_issues`.)"""
+    doesn't define them itself is `contract_issues`.) A domain is optional,
+    but one that's named must exist. A column's `classification` counts:
+    the vocabulary it comes from is the repository's."""
     domain = doc.get("domain")
     issues = []
-    if domain not in gov.domains:
-        issues.append(unknown_domain(domain))
-    terms = gov.glossaries[domain].terms if domain in gov.glossaries else {}
+    if domain is not None and domain not in gov.domains:
+        issues.append(unknown_domain(domain, gov))
+    where = f"{gov.directory}/glossaries/{domain}.yaml or the shared glossary" if domain else "the shared glossary (a glossary with no `domain`)"
     for prop in columns(doc):
         name = prop.get("businessName")
-        if name and name not in terms:
+        if name and resolve_term(gov, domain, name) is None:
             issues.append(GovernanceIssue(
                 "unknown-business-term",
-                f"column '{prop['name']}': businessName '{name}' is not a term in {GOVERNANCE_DIR}/glossaries/{domain}.yaml; "
+                f"column '{prop['name']}': businessName '{name}' is not a term in {where}; "
                 f"add it under `terms:`\n{term_stub(name)}",
+            ))
+        value = prop.get("classification")
+        if value is not None and value not in gov.classifications:
+            issues.append(GovernanceIssue(
+                "unknown-classification",
+                f"column '{prop['name']}': classification '{value}' is not one of {list(gov.classifications)}",
             ))
     return issues
 
@@ -545,8 +567,8 @@ def glossary_issues(glossary_: Glossary) -> list[GovernanceIssue]:
 
 def glossary_reference_issues(glossary_: Glossary, gov: Governance) -> list[GovernanceIssue]:
     """Checks that need the rest of the repository."""
-    if glossary_.domain not in gov.domains:
-        return [unknown_domain(glossary_.domain)]
+    if glossary_.domain is not None and glossary_.domain not in gov.domains:
+        return [unknown_domain(glossary_.domain, gov)]
     return []
 
 
@@ -560,8 +582,8 @@ def data_product_issues(product: DataProduct) -> list[GovernanceIssue]:
 def data_product_reference_issues(product: DataProduct, gov: Governance, contract_ids: set[str]) -> list[GovernanceIssue]:
     """Checks that need the rest of the repository."""
     issues = []
-    if product.domain not in gov.domains:
-        issues.append(unknown_domain(product.domain))
+    if product.domain is not None and product.domain not in gov.domains:
+        issues.append(unknown_domain(product.domain, gov))
     for contract_id in product.contract_ids:
         if contract_id not in contract_ids:
             issues.append(GovernanceIssue(

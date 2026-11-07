@@ -55,6 +55,7 @@ PROJECT_METHODS = {
     "products": "(self, domain=None, owner=None)",
     "contracts": "(self, domain=None, layer=None, product=None, owner=None)",
     "terms": "(self, domain=None)",
+    "classifications": "(self)",
     "columns": "(self, domain=None, contract=None, classification=None)",
     "domain": "(self, name)",
     "product": "(self, name)",

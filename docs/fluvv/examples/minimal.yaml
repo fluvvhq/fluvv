@@ -36,7 +36,7 @@ schema:
         required: true
 
 customProperties:
-  - property: medallionLayer
+  - property: layer # optional, and any name you like
     value: bronze
   - property: sources
     value:

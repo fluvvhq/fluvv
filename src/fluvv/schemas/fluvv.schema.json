@@ -2,8 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fluvv.se/schemas/fluvv.schema.json",
   "title": "Fluvv ingestion extension",
-  "description": "Validates the `value` of the `sources`, `transform`, `ingestion_config` and `businessMetrics` customProperties entries that Fluvv adds to an otherwise-vanilla ODCS v3.x contract. See docs/fluvv/SPEC.md.",
+  "description": "Validates the `value` of the `sources`, `transform`, `ingestion_config`, `businessMetrics` and `layer` customProperties entries that Fluvv adds to an otherwise-vanilla ODCS v3.x contract. See docs/fluvv/SPEC.md.",
   "$defs": {
+    "Layer": {
+      "type": "string",
+      "pattern": "^[^./\\\\]+$",
+      "description": "A label for where this table sits in your pipeline: any name. It can become a folder and a catalog level, so it can't contain `.`, `/` or `\\`."
+    },
     "Sources": {
       "type": "array",
       "minItems": 1,

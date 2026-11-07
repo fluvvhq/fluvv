@@ -2,17 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://fluvv.se/schemas/glossary.schema.json",
   "title": "Fluvv Glossary",
-  "description": "A domain's business vocabulary. One file per domain under governance/glossaries/. Contract columns reference a term by their ODCS `businessName`. See docs/fluvv/SPEC.md Section 5.",
+  "description": "A business vocabulary: one domain's, or, with no `domain`, the one shared by every contract. One file each under governance/. Contract columns reference a term by their ODCS `businessName`. See docs/fluvv/SPEC.md Section 5.2.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "domain", "terms"],
+  "required": ["apiVersion", "kind", "terms"],
   "properties": {
     "apiVersion": { "const": "fluvv/v1" },
     "kind": { "const": "Glossary" },
     "domain": {
       "type": "string",
       "minLength": 1,
-      "description": "The domain this glossary belongs to; must have a domain file."
+      "description": "The domain this glossary belongs to; must have a domain file. Omit it for the shared glossary."
     },
     "description": { "type": "string" },
     "terms": {

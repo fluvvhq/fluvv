@@ -9,9 +9,9 @@ Section 7.1.
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any, Iterable
 
-from fluvv.governance import LAYERS
 from fluvv.project import Project
 
 EMPTY = "-"
@@ -106,12 +106,13 @@ def impact(project: Project, ref: str) -> str | None:
 
 def _domain(d: dict[str, Any], project: Project) -> str:
     members = project.contracts(domain=d["name"])
-    by_layer = ", ".join(f"{layer} {n}" for layer in LAYERS if (n := sum(c["layer"] == layer for c in members)))
+    # Upstream layers first: Counter keeps the order `members` is in.
+    by_layer = ", ".join(f"{layer} {n}" for layer, n in Counter(c["layer"] for c in members if c["layer"]).items())
     fields = [
         ("owner", d["owner"]),
         ("experts", d["experts"]),
         ("data products", [p["name"] for p in project.products(domain=d["name"])]),
-        ("contracts", f"{len(members)} ({by_layer})" if members else None),
+        ("contracts", (f"{len(members)} ({by_layer})" if by_layer else len(members)) if members else None),
         ("glossary terms", len(project.terms(domain=d["name"]))),
     ]
     return _block(f"{d['name']} (domain)", d["description"], fields)
@@ -151,8 +152,15 @@ def _contract(c: dict[str, Any]) -> str:
 
 
 def _term(t: dict[str, Any], project: Project) -> str:
-    # A column's businessName names a term in its own domain's glossary.
-    used_by = [[col["contract"], col["name"]] for col in project.columns(domain=t["domain"]) if col.get("businessName") == t["name"]]
+    # A column's businessName names a term in its own domain's glossary,
+    # or failing that in the shared one.
+    glossaries = {term["domain"] for term in project.terms() if term["name"] == t["name"]}
+
+    def resolves_here(col: dict[str, Any]) -> bool:
+        domain = project.contract(col["contract"])["domain"]
+        return (domain if domain in glossaries else None) == t["domain"]
+
+    used_by = [[col["contract"], col["name"]] for col in project.columns() if col.get("businessName") == t["name"] and resolves_here(col)]
     fields = [("domain", t["domain"]), ("synonyms", t["synonyms"]), ("related terms", t["relatedTerms"])]
     detail = table(["USED BY", "COLUMN"], used_by) if used_by else None
     return _block(f"{t['name']} (glossary term)", t["definition"], fields, detail)

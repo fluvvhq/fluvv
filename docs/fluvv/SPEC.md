@@ -1,6 +1,6 @@
 # Fluvv Spec
 
-> **Status:** v1.2.0 (contracts on ODCS v3.1.0). Normative, field-by-field
+> **Status:** v1.3.0 (contracts on ODCS v3.1.0). Normative, field-by-field
 > reference for Fluvv contracts and the governance files around them.
 
 ## 1. What Fluvv is
@@ -14,7 +14,7 @@ In standards terms, Fluvv is two things on top of ODCS v3.1.0:
 
 - **An extension.** New `customProperties` for what ODCS has no concept
   of: `sources`, `transform`, `ingestion_config` (Section 3).
-- **A profile.** Stricter rules on fields ODCS already has, e.g. a fixed
+- **A profile.** Stricter rules on fields ODCS already has, e.g. a closed
   `classification` vocabulary, retention and freshness units, the v3.1.0
   team object, and relationships that must resolve (Section 4). Every Fluvv
   contract is valid ODCS; not every ODCS contract is a valid Fluvv
@@ -33,24 +33,68 @@ Two principles decide where everything goes:
    Shared entities (domains, glossaries, Data Products) live in their own
    files under `governance/` (Section 5), one home per fact.
 
-A Fluvv repository keeps its contracts under `contracts/` and its
-governance files under `governance/`. Repo-relative paths, such as
-`sources[].contract`, resolve from its root: the directory above
-`contracts/` for a file at `contracts/<layer>/<domain>/<table>.yaml`, the
-directory above `governance/` for a file at `governance/<kind>/<file>`,
-and otherwise the nearest directory holding `contracts/` or `governance/`. The open `fluvv` package implements this spec (lint, compile,
-export, list, show and impact); building tables from contracts is Fluvv Engine,
-a separate commercial package.
+A Fluvv repository keeps its contracts, anywhere under `contracts/`, and its
+governance files, anywhere under `governance/`. The open `fluvv` package
+implements this spec (lint, compile, export, list, show and impact);
+building tables from contracts is Fluvv Engine, a separate commercial
+package.
 
 | | ODCS v3 | Fluvv |
 |---|---|---|
 | Schema, types, quality rules, `servers`, SLAs | ✅ | uses as-is |
 | Owners, tags, descriptions, `businessName`, `classification` | ✅ fields, free-form values | profile rules on their values (Section 4) |
 | Where data comes from and how it's built | ❌ | `sources`, `transform`, `ingestion_config` (Section 3) |
-| Medallion layer, computable business metrics | ❌ | `medallionLayer`, `businessMetrics` (Section 3) |
+| A layer label, computable business metrics | ❌ | `layer`, `businessMetrics` (Section 3) |
 | Column-level lineage | `transformSourceObjects`/`transformLogic` (free text, per column) | **derived** from the transform SQL into the manifest, never hand-written (Section 7) |
 | Domains, business glossary | ❌ | `governance/domains`, `governance/glossaries` (Section 5) |
 | Data Products | `dataProduct` (a name on the contract) | ODPS v1.1.0 files under `governance/products` own membership (Section 5.3) |
+
+### 1.1 The repository and its project file
+
+Repo-relative paths, such as `sources[].contract`, resolve from the
+repository's root. An optional `fluvv.yaml` there marks it, and names the
+top-level folders when they aren't `contracts` and `governance`:
+
+```yaml
+apiVersion: fluvv/v1
+kind: Project
+contracts: data/contracts        # default: contracts
+governance: data/governance      # default: governance
+```
+
+The folders must exist, sit inside the repository and not overlap
+(`invalid-project-folder`, Section 6.3).
+
+The root of a file inside a folder a `fluvv.yaml` names is where that
+`fluvv.yaml` is. Otherwise it's the directory above `contracts/` for a file at
+`contracts/<a>/<b>/<file>.yaml`, the directory above `governance/` for a file
+at `governance/<kind>/<file>`, and otherwise the nearest directory holding a
+`fluvv.yaml`, `contracts/` or `governance/`. A folder named `contracts` or
+`governance` inside the contracts or governance folder, or a repository itself
+in a folder with one of those names, can be read more than one way. A project
+file settles it.
+
+### 1.2 What's yours to choose
+
+Fluvv enforces what keeps it correct: references resolve, each contract has
+its own `id` and its own table, and sources don't form a cycle (Section 6).
+Everything else is your choice. The [example
+repository](https://github.com/fluvvhq/fluvv-example) makes one set of
+choices, and they are only that:
+
+| Your choice | The example's |
+|---|---|
+| Whether tables have layers, and what they're called (Section 3.6) | `bronze`, `silver`, `gold` |
+| What each layer does, and which reads which | landing to bronze to silver to gold; bronze keeps values as delivered, silver dedupes and adds quality rules |
+| The shape of an `id`, and where a contract sits under `contracts/` | `<layer>.<domain>.<table>`, `contracts/<layer>/<domain>/<table>.yaml` |
+| Table names, and team names and what they own | `<domain>_<table>_<layer>` |
+| Whether a contract names a domain (Section 4) | every contract does |
+| Whether a column has a `businessName`, and which glossary holds its term (Section 5.2) | every column does, in the domain's glossary |
+| The `classification` values (Section 5.4), and which goes on which column | the default values; `pii` for names, `sensitive-pii` for emails and phones |
+| Which tables are in a data product, and what they must declare | every gold table, with `tags`, a `freshness` SLA and `businessMetrics` |
+| Audit columns and `ingestion_config.mode` | `_ingested_at` and friends; bronze appends |
+| Where data lives, and the folders of the repository (Section 1.1) | `data/<layer>/...` |
+| What runs the contracts, and when | by hand, upstream first |
 
 ## 2. Execution model
 
@@ -81,7 +125,7 @@ The two transform levels have distinct jobs:
   final aggregation. It produces this contract's `schema`.
 
 If a per-source transform turns into heavy cleaning, that cleaning belongs
-in the upstream layer's own contract instead.
+in an upstream contract of its own instead.
 
 > **Planned:** write-time enforcement of the contract's `schema` types.
 > Today the target is written exactly as the transform returns it, and type
@@ -183,21 +227,22 @@ These enums are Fluvv's own. They currently match OpenMetadata's
 integration a straight mapping, but the spec doesn't depend on any one
 catalog.
 
-### 3.6 `medallionLayer` (required)
+### 3.6 `layer` (optional)
 
-`value` is `bronze`, `silver` or `gold`. Drives the OpenMetadata Tier
-(gold → Tier1, silver → Tier2, bronze → Tier3), log table paths, and
-catalog naming (catalog = layer, schema = `domain`, table = schema `name`).
+`value` is a label for where the table sits in your pipeline: `bronze`,
+`staging`, `marts`, or any other name without `.`, `/` or `\`. A contract
+doesn't need one, and nothing about building or checking a table depends on
+it. Fluvv uses it to filter (`fluvv list contracts --layer`), and Fluvv
+Engine uses it, with the `domain`, to place run records and name catalog
+levels, by default. `bronze`, `silver` and `gold` also set an OpenMetadata
+Tier (gold → Tier1, silver → Tier2, bronze → Tier3); other names set none.
+Contracts list upstream first: bronze, silver, gold where every contract has
+one of those, and otherwise by lineage.
 
-`medallionLayer` and ODCS `domain` are the source of truth for where a
-contract sits. The contract `id` and its file path restate them by
-convention. Lint checks the `id` against them and compile checks the
-file path (`contract-naming-mismatch`, Section 6):
-
-```
-id:   <medallionLayer>.<domain>.<name>          e.g. silver.sales.cars
-path: contracts/<medallionLayer>/<domain>/<name>.yaml
-```
+Its name before spec v1.3.0, `medallionLayer`, keeps working through fluvv
+1.x, and wins if a contract sets both: any `customProperty` was allowed before,
+so a contract with `medallionLayer` may have a `layer` that means something
+else.
 
 ### 3.7 Example
 
@@ -252,10 +297,10 @@ Fluvv only constrains how it's used, and how it reaches catalogs.
 
 | Field | Where | Fluvv rule / meaning |
 |---|---|---|
-| `domain` | top level | A reference: must name a domain file (Section 5.1). |
-| `businessName` | column | A reference: must be a term in the domain's glossary (Section 5.2). Columns without one get no term. |
+| `domain` | top level | Optional. A reference: if set, must name a domain file (Section 5.1). It can become a folder and a catalog level, so like a layer it can't contain `.`, `/` or `\`. |
+| `businessName` | column | Optional. A reference: if set, must be a term in the domain's glossary or the shared glossary (Section 5.2). Columns without one get no term. |
 | `description` | column | Describes *this column*: renames, aggregation scope, nulls. The business definition of the term lives in the glossary, not here. |
-| `classification` | column | One of `public`, `internal`, `pii`, `sensitive-pii` (→ OpenMetadata `PII.None`, `PII.None`, `PII.NonSensitive`, `PII.Sensitive`). |
+| `classification` | column | Optional. One of the repository's values (Section 5.4), by default `public`, `internal`, `pii`, `sensitive-pii` (→ OpenMetadata `PII.None`, `PII.None`, `PII.NonSensitive`, `PII.Sensitive`). |
 | `primaryKey` / `primaryKeyPosition` | column | A single-column key → column constraint `PRIMARY_KEY`; composite → a table `PRIMARY_KEY` constraint. Otherwise `unique` → `UNIQUE`, `required` → `NOT_NULL`. |
 | `physicalName` | schema object | The table's display name. Avoid it for now: `datacontract-cli` 1.1.1 and 1.1.2 build the local test view under `name` but look the table up by `physicalName`, so every `test()` check on a local file-backed table fails. |
 | `description.purpose` / `usage` / `limitations` | top level | The table description. |
@@ -280,12 +325,14 @@ restate them.
 governance/
   domains/<domain>.yaml          # kind: Domain   (Fluvv, fluvv/schemas/domain.schema.json)
   glossaries/<domain>.yaml       # kind: Glossary (Fluvv, fluvv/schemas/glossary.schema.json)
+  classifications.yaml           # kind: Classifications (Fluvv, fluvv/schemas/classifications.schema.json)
   products/<name>.odps.yaml      # kind: DataProduct (ODPS v1.1.0, fluvv/schemas/odps-1.1.0.schema.json)
 ```
 
 No open standard covers domains or glossaries in a practical form, so those
-two are small Fluvv formats. Data Products use Bitol's **Open Data Product
-Standard**, ODCS's sibling standard.
+are small Fluvv formats. Data Products use Bitol's **Open Data Product
+Standard**, ODCS's sibling standard. All of them are optional: a repository
+that doesn't use domains, terms or products needs none of these files.
 
 ### 5.1 Domain
 
@@ -319,6 +366,12 @@ terms:
   are merged in.
 - `relatedTerms` must name terms in the same glossary.
 
+A glossary with no `domain` is the **shared glossary**, for terms that
+don't belong to one domain, so they're defined once. A column's
+`businessName` resolves in its own domain's glossary first, then the shared
+one, which is the only one a contract with no domain can use. Each domain,
+and the shared glossary, has one file (`duplicate-definition`, Section 6.3).
+
 ### 5.3 Data Product (ODPS v1.1.0)
 
 ```yaml
@@ -343,24 +396,45 @@ outputPorts:
 The product owns its membership: the contracts named by
 `outputPorts[].contractId`. The owning team is `team.name`; experts are
 `team.members` with `role: expert`. Any other ODPS field is allowed and
-validated against the ODPS schema.
+validated against the ODPS schema. A product can list any contract, whatever
+its layer. OpenMetadata needs a `domain` on a Data Product, so Fluvv Engine
+doesn't push one without it.
+
+### 5.4 Classifications
+
+```yaml
+apiVersion: fluvv/v1
+kind: Classifications
+values:
+  - name: open
+  - name: restricted
+    catalogTag: PII.Sensitive    # optional: the tag it becomes in a catalog
+```
+
+Replaces the default vocabulary (Section 4) with your own, for the whole
+repository. A `catalogTag` must exist in the catalog; without one, a column
+with that value gets no tag. A `classification` that isn't in the vocabulary
+fails compile (`unknown-classification`), since a misspelt `pii` would
+otherwise pass as if it meant something.
 
 ## 6. Validation: lint and compile
 
 Checking happens in two steps, each with its own question:
 
 - `python -m fluvv lint [<path>...]`: **is each file right on its own?** It
-  takes contracts and governance files alike (dispatched on `kind`), needs
-  nothing but the files it's given (no repository around them), and exits
-  non-zero if any fail. A folder means the `.yaml` files in it; a
-  repository root means those under its `contracts/` and `governance/`; no
-  path means the repository in the current directory.
+  takes contracts, governance files and the project file alike (dispatched
+  on `kind`), needs nothing but the files it's given (no repository around
+  them), and exits non-zero if any fail. A folder means the `.yaml` files in
+  it; a repository root means those under its contracts and governance
+  folders, and its project file; no path means the repository in the
+  current directory.
 - `python -m fluvv compile`: **do the repository's files fit together?**
   Run from the repository root, it checks every reference between files
   before writing the manifest (Section 7). If any doesn't resolve, it lists
   them all, exits non-zero and writes nothing.
 
-Compile first makes sure it can read every file: each must load as YAML
+Compile first makes sure it can read every file, starting with the project
+file, whose folders say where the others are: each must load as YAML
 and pass lint's structural checks (the ODCS JSON Schema, the Fluvv
 `customProperties`, the `id`). A file that doesn't is reported as
 `fails-lint` with its first problem, and compile checks no references
@@ -384,12 +458,11 @@ it's in.
 | `missing-combine-transform` | Two or more sources but no contract-level transform. |
 | `unknown-source-reference` | The contract-level transform reads a table that isn't a declared source (CTE names are fine). |
 | `transform-sql-unparseable` | A transform isn't parseable as Spark SQL. |
-| `unknown-classification` | `classification` outside the profile's vocabulary. |
 | `invalid-retention` | Retention without an integer value and a d/w/m/y unit. |
 | `invalid-freshness` | Freshness without a positive integer value and an h/d/w unit. |
 | `team-array-deprecated` | `team` is the v3.0 array instead of the v3.1.0 object. |
-| `unknown-medallion-layer` | `medallionLayer` missing or not bronze/silver/gold. |
-| `contract-naming-mismatch` | `id` isn't `<medallionLayer>.<domain>.<name>`. |
+| `missing-contract-id` | The contract has no `id`, or it isn't a non-empty string. |
+| `invalid-domain-name` | The contract's `domain` contains `.`, `/` or `\`. |
 | `invalid-relationship` | A relationship from a column this contract doesn't have, or a `from`/`to` count mismatch. |
 | `related-terms-in-contract` | A column still carries `relatedTerms`; move it to the glossary. |
 | `data-product-in-contract` | The contract sets `dataProduct`; list it in the product's `outputPorts` instead. |
@@ -403,23 +476,28 @@ Schema validation for the file's `kind`, then:
 | `unknown-related-term` | A term's `relatedTerms` names a term not in its glossary. |
 | `missing-product-owner` | A product has no `team.name`. |
 
-### 6.3 Compile: references between files
+### 6.3 Compile: how the files fit together
 
 | Code | In | Meaning |
 |---|---|---|
 | `source-contract-not-found` | contract | `sources[].contract` doesn't resolve to a file. |
-| `contract-naming-mismatch` | contract | The file isn't at `contracts/<medallionLayer>/<domain>/<name>.yaml`. |
+| `source-cycle` | contract | Contracts read each other in a cycle, or one reads itself: a table upstream of itself can't be built from nothing. |
+| `duplicate-contract-id` | contract | Two contracts have the same `id`. |
+| `duplicate-target` | contract | Two contracts write to the same `servers` path, or have the same layer, domain and schema name, which would give them one set of run records and one catalog entry. Contracts that all append to one path are fine: they fan in to one table, and nothing is lost. |
 | `relationship-target-not-found` | contract | A relationship's `to` doesn't resolve to a contract file, schema object and column. |
 | `relationship-target-not-unique` | contract | A relationship's target is neither unique nor the target's primary key. |
-| `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. |
-| `unknown-business-term` | contract | `businessName` isn't in the domain's glossary. The message includes a ready-to-paste term stub. |
+| `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. A contract, glossary or product with no `domain` is fine. |
+| `unknown-business-term` | contract | `businessName` isn't in the domain's glossary or the shared one. The message includes a ready-to-paste term stub. |
+| `unknown-classification` | contract | `classification` isn't in the repository's vocabulary (Section 5.4). Compile's, not lint's, because the vocabulary is the repository's. |
 | `unknown-product-contract` | product | An output port's `contractId` isn't the `id` of any contract. |
+| `duplicate-definition` | glossary, classifications | Two files define one domain's glossary, the shared glossary, or the classifications. |
+| `invalid-project-folder` | project file | A folder it names doesn't exist, or its two folders overlap. Without this, a mistyped folder would compile as nothing to check. |
 | `fails-lint` | any file | The file doesn't load as YAML or fails lint's structural checks; no references are checked until it's fixed. |
 | `not-a-repository` | the folder | There are no contract or governance files under the current directory. |
 
-Every rule checks one file, or one file against the files it references.
-There are no "keep N contracts consistent with each other" rules: each
-fact has one home, so there's nothing to conflict.
+Each rule checks one file against what it references, or keeps two files from
+claiming the same thing. There are no "keep N contracts consistent with each
+other" rules: each fact has one home, so there's nothing to conflict.
 
 Not yet checked: that the columns the transforms produce match the
 contract's own `schema` (names/count).
@@ -436,9 +514,10 @@ records.
 
 | Key | Contents |
 |---|---|
-| `contracts[]` | Per table: domain, layer, owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), server, Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
+| `contracts[]` | Per table: domain and layer (`null` if it has none), owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), server, Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
 | `domains[]` | Owner, experts, description. |
-| `glossaries[]` | Terms with definition, synonyms (explicit + derived) and related terms. |
+| `glossaries[]` | Terms with definition, synonyms (explicit + derived) and related terms. `domain` is `null` for the shared glossary. |
+| `classifications[]` | Each value a `classification` may take, the repository's or the default, with its `catalogTag`. |
 | `dataProducts[]` | Owner, experts, member contract ids. |
 | `lineage` | Table edges (`{from, to}` contract ids), and column edges through per-source and contract-level transforms: `{from: {contract, columns}, to: {contract, column}, function?}`, one per upstream contract. `function` lists every expression applied, output first, joined by ` <- `. |
 | `sourceHash` | SHA-256 over every input file: which exact inputs this manifest describes. |
@@ -456,7 +535,7 @@ compiles the repo when given no file.
 ```bash
 python -m fluvv list domains                  # owner, and how many data products, contracts and terms
 python -m fluvv list products [--domain D] [--owner O]   # domain, owner, number of contracts
-python -m fluvv list contracts [--domain D] [--layer L] [--product P] [--owner O]   # bronze to gold: owner, data products, freshness
+python -m fluvv list contracts [--domain D] [--layer L] [--product P] [--owner O]   # upstream first: owner, data products, freshness
 python -m fluvv list terms [--domain D]       # domain, definition
 python -m fluvv list columns [--domain D] [--contract C] [--classification K]...   # contract, type, term, classification
 python -m fluvv show <name>                   # one contract (by id or file), data product, domain or glossary term, in full
@@ -468,7 +547,8 @@ an integration reading it sees, and they take the same `--manifest`
 option the OpenMetadata push does. `fluvv.Project` is the same in Python:
 `domains()`, `products()`, `contracts()`, `terms()` and `columns()` take
 the same filters and return manifest entries (a term with its `domain`, a
-column with its `contract`); `domain()`, `product()`, `contract()` and
+column with its `contract`); `classifications()` returns the vocabulary;
+`domain()`, `product()`, `contract()` and
 `term()` look one up or return None; `impact()` returns
 `{contract, column, via}` entries. `Project()` compiles the repository in
 the current directory; `Project(root, manifest=path)` reads a prebuilt
@@ -494,14 +574,15 @@ column or table, and its owner column says which team.
 
 ## 8. Generated artifacts
 
-`python -m fluvv export <contract.yaml>...` derives two artifacts per
-contract, at a path mirroring the contract's own (e.g.
-`contracts/bronze/sales/cars.yaml` → `.../bronze/sales/cars.*`):
+`python -m fluvv export [--out <dir>] <contract.yaml>...` derives two
+artifacts per contract, at a path mirroring the contract's own (e.g.
+`contracts/bronze/sales/cars.yaml` → `.../bronze/sales/cars.*`). `<dir>`
+defaults to the repository's contracts folder:
 
 | Artifact | Path | Source |
 |---|---|---|
-| Spark schema | `contracts/spark_schemas/<mirrored path>.py` | `datacontract-cli`'s `export("spark")`, unchanged. |
-| Ingestion config | `contracts/ingestion_config/<mirrored path>.json` | The parsed `sources`/`transform`/`ingestion_config`/`businessMetrics`, **resolved**: contract-backed sources get their `location`/`format` filled in, so the engine never needs to read another contract. |
+| Spark schema | `<dir>/spark_schemas/<mirrored path>.py` | `datacontract-cli`'s `export("spark")`, unchanged. |
+| Ingestion config | `<dir>/ingestion_config/<mirrored path>.json` | The parsed `sources`/`transform`/`ingestion_config`/`businessMetrics`, **resolved**: contract-backed sources get their `location`/`format` filled in, so the engine never needs to read another contract. |
 
 These are derived files: regenerate them after editing a contract rather
 than hand-editing them.

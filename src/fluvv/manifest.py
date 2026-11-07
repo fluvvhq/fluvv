@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from fluvv import governance, lineage
-from fluvv.contract import get_custom_property, parse_extension, resolve_extension
+from fluvv.contract import PROJECT_FILE, contract_files, get_custom_property, governance_files, parse_extension, resolve_extension
 from fluvv.semantic import ProjectCheckError, run_project_checks
 
 MANIFEST_VERSION = "2"
@@ -36,7 +36,9 @@ class StaleManifestError(ValueError):
 
 def source_hash(repo_root: Path) -> str:
     digest = hashlib.sha256()
-    paths = sorted([*repo_root.glob("contracts/**/*.yaml"), *(repo_root / governance.GOVERNANCE_DIR).glob("**/*.yaml")])
+    # The project file counts: it decides which files are in the repository.
+    project_file = [repo_root / PROJECT_FILE] if (repo_root / PROJECT_FILE).is_file() else []
+    paths = sorted([*contract_files(repo_root), *governance_files(repo_root), *project_file])
     for path in paths:
         digest.update(path.relative_to(repo_root).as_posix().encode())
         digest.update(b"\0")
@@ -150,7 +152,7 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
         contracts.append({
             "id": doc["id"],
             "path": path.relative_to(repo_root).as_posix(),
-            "domain": doc["domain"],
+            "domain": doc.get("domain"),
             "layer": governance.medallion_layer(doc),
             "table": schema_object["name"],
             "physicalName": schema_object.get("physicalName"),
@@ -188,8 +190,9 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
                     for t in governance.glossary(gov, domain, docs).values()
                 ],
             }
-            for domain in sorted(gov.glossaries)
+            for domain in sorted(gov.glossaries, key=lambda d: d or "")  # the shared glossary, None, first
         ],
+        "classifications": [{"name": name, "catalogTag": tag} for name, tag in gov.classifications.items()],
         "dataProducts": [
             {
                 "name": p.name,
@@ -236,7 +239,7 @@ def check_fresh(manifest: dict[str, Any], repo_root: Path | str = ".") -> None:
     are no contracts to compare against (a machine holding only the
     manifest, e.g. a downstream CI job)."""
     repo_root = Path(repo_root)
-    if not any(repo_root.glob("contracts/**/*.yaml")):
+    if not contract_files(repo_root):
         return
     if manifest["sourceHash"] != source_hash(repo_root.resolve()):
         raise StaleManifestError("the manifest is stale: contracts or governance files changed since it was compiled; run `fluvv compile`")

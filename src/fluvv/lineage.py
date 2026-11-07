@@ -22,7 +22,7 @@ from sqlglot import exp
 from sqlglot.errors import SqlglotError
 from sqlglot.lineage import lineage as sql_lineage
 
-from fluvv.contract import get_custom_property, load_odcs_document
+from fluvv.contract import contract_files, get_custom_property, load_odcs_document
 
 DIALECT = "spark"
 _RAW_PREFIX = "__fluvv_raw_"
@@ -122,8 +122,8 @@ def column_lineage(doc: dict[str, Any], upstream_by_source_id: dict[str, dict[st
 
 
 def build_lineage_graph(repo_root: Path | str = ".") -> dict[str, dict[str, list[str]]]:
-    """Walks every `contracts/**/*.yaml` under `repo_root` and inverts
-    each contract's `sources[].contract` edges into
+    """Walks every contract under `repo_root` and inverts each contract's
+    `sources[].contract` edges into
     `{contract_id: {"upstream": [...], "downstream": [...]}}`. A full scan
     is unavoidable for `downstream` -- nothing in a contract points
     forward to what depends on it -- so it's done once here for every
@@ -133,7 +133,7 @@ def build_lineage_graph(repo_root: Path | str = ".") -> dict[str, dict[str, list
     repo_root = Path(repo_root)
     docs_by_id: dict[str, dict[str, Any]] = {}
     id_by_resolved_path: dict[Path, str] = {}
-    for path in sorted(repo_root.glob("contracts/**/*.yaml")):
+    for path in contract_files(repo_root):
         doc = load_odcs_document(path)
         docs_by_id[doc["id"]] = doc
         id_by_resolved_path[path.resolve()] = doc["id"]

@@ -4,6 +4,49 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
+## [Unreleased]
+
+Fluvv no longer prescribes how a repository names, lays out and layers its
+contracts (spec v1.3.0). Every contract that was valid stays valid, except
+as listed under Added. Running one that uses `layer` instead of
+`medallionLayer`, has neither, or has no domain needs Fluvv Engine 1.2 or
+later.
+
+### Added
+
+- `fluvv.yaml`: an optional project file that marks the repository's root
+  and names its contracts and governance folders.
+- A shared glossary: a glossary with no `domain`, which every contract can
+  use. A column's `businessName` resolves in its domain's glossary first.
+- `kind: Classifications`: a repository's own `classification` values, each
+  with an optional `catalogTag`, listed in the manifest's new
+  `classifications` key and by `Project.classifications()`.
+- `fluvv export --out`, and an `out_dir` parameter on `export_artifacts`.
+- Compile checks that keep contracts apart, now that ids and paths are free:
+  `duplicate-contract-id`, `duplicate-target` and `source-cycle`, plus
+  `duplicate-definition` for two files defining one glossary or vocabulary.
+  A repository these newly fail was already overwriting its own tables or
+  losing definitions. Contracts that all append to one table are fine.
+- `missing-contract-id` and `invalid-domain-name` in lint, which the id and
+  path checks used to cover, and `invalid-project-folder` in compile for a
+  project file naming a folder that doesn't exist.
+
+### Changed
+
+- The layer is optional and can have any name. It's now the `layer`
+  customProperty; `medallionLayer` keeps working through 1.x, and wins if a
+  contract has both.
+- `domain` is optional on contracts and glossaries, so the manifest's
+  `domain` can be `null`. A domain that's named must still exist.
+- A contract `id` can be any unique string and a contract can sit anywhere
+  under the contracts folder. `contract-naming-mismatch` and
+  `unknown-medallion-layer` are gone.
+- `unknown-classification` moved from lint to compile, since the vocabulary
+  is the repository's and lint sees one file at a time.
+- Where any contract's layer isn't bronze, silver or gold, `fluvv list
+  contracts` and `columns`, `fluvv impact` and `Project` order contracts by
+  lineage, upstream first. Bronze, silver and gold keep their order.
+
 ## [1.2.0] - 2026-11-05
 
 ### Added

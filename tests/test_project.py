@@ -50,7 +50,7 @@ def test_lookups_by_name_return_the_manifest_entry_or_none(project):
 def test_a_term_in_several_domains_needs_its_domain():
     term = {"name": "Net", "definition": "d", "synonyms": [], "relatedTerms": []}
     project = Project(manifest={"glossaries": [{"domain": "a", "terms": [term]}, {"domain": "b", "terms": [term]}]})
-    with pytest.raises(LookupError, match=r"several domains \(a, b\)"):
+    with pytest.raises(LookupError, match=r"several glossaries \(a, b\)"):
         project.term("Net")
     assert project.term("Net", domain="b")["domain"] == "b"
 

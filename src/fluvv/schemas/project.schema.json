@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fluvv.se/schemas/project.schema.json",
+  "title": "Fluvv project file",
+  "description": "Optional `fluvv.yaml` at a repository's root: marks the root and names its top-level folders when they aren't the defaults. See docs/fluvv/SPEC.md Section 1.1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind"],
+  "properties": {
+    "apiVersion": { "const": "fluvv/v1" },
+    "kind": { "const": "Project" },
+    "contracts": {
+      "$ref": "#/$defs/Folder",
+      "description": "The folder holding the contracts, relative to this file. Default: contracts."
+    },
+    "governance": {
+      "$ref": "#/$defs/Folder",
+      "description": "The folder holding the governance files, relative to this file. Default: governance."
+    }
+  },
+  "$defs": {
+    "Folder": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|$)).+$",
+      "description": "A folder inside the repository: not absolute, and with no `.` or `..` in it."
+    }
+  }
+}

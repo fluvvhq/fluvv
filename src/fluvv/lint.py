@@ -18,7 +18,7 @@ from datacontract.data_contract import DataContract
 from datacontract.model.run import ResultEnum
 
 from fluvv.contract import MissingCustomPropertyError, load_odcs_document, parse_extension, yaml_problem
-from fluvv.schema import GOVERNANCE_KINDS, custom_property_errors, odcs_errors, validate_governance_document
+from fluvv.schema import SCHEMA_KINDS, custom_property_errors, odcs_errors, validate_governance_document
 from fluvv.semantic import SemanticIssue, run_governance_file_checks, run_semantic_checks
 
 
@@ -45,7 +45,8 @@ class LintResult:
 
 
 def lint(contract_path: Path | str) -> LintResult:
-    """Lint a contract, or a governance file (dispatched on its `kind`)."""
+    """Lint a contract, a governance file or the project file (dispatched
+    on its `kind`)."""
     contract_path = Path(contract_path)
     try:
         doc = load_odcs_document(contract_path)
@@ -53,7 +54,7 @@ def lint(contract_path: Path | str) -> LintResult:
         return LintResult(contract_path=contract_path, schema_errors=[yaml_problem(exc)])
     if not isinstance(doc, dict):
         return LintResult(contract_path=contract_path, schema_errors=["the file is empty or isn't a YAML mapping"])
-    if doc.get("kind") in GOVERNANCE_KINDS:
+    if doc.get("kind") in SCHEMA_KINDS:
         return lint_governance_file(contract_path, doc)
     result = LintResult(contract_path=contract_path)
 

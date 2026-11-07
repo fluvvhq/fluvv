@@ -8,9 +8,9 @@ from typing import Any, Callable
 import typer
 
 from fluvv import views
-from fluvv.contract import RepoRootNotFoundError
+from fluvv.contract import PROJECT_FILE, InvalidProjectFileError, Layout, RepoRootNotFoundError, project_layout
 from fluvv.export import export_artifacts
-from fluvv.governance import CLASSIFICATIONS, LAYERS
+from fluvv.governance import MEDALLION_LAYERS
 from fluvv.lint import lint
 from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
 from fluvv.project import Project
@@ -29,19 +29,26 @@ ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-o
 
 def _yaml_files(path: Path) -> list[Path]:
     """What linting `path` means. A file is itself. A repository root (it
-    holds contracts/ or governance/) is the YAML in those two folders, so
-    `fluvv lint .` lints the project and nothing else in it. Any other
-    folder is every YAML file below it, skipping hidden folders like .venv.
-    The generated files under contracts/ are .py and .json, so they're
-    never picked up."""
+    holds its contracts or governance folder) is the YAML in those two
+    folders plus its project file, so `fluvv lint .` lints the project and
+    nothing else in it. Any other folder is every YAML file below it,
+    skipping hidden folders like .venv. The generated files under contracts/
+    are .py and .json, so they're never picked up."""
     if path.is_file():
         return [path]
-    roots = [path / top for top in ("contracts", "governance") if (path / top).is_dir()] or [path]
+    try:
+        layout = project_layout(path)
+    except InvalidProjectFileError:
+        layout = Layout()  # linting the project file below is what reports this
+    roots = [path / top for top in (layout.contracts, layout.governance) if (path / top).is_dir()]
+    project_file = [path / PROJECT_FILE] if roots and (path / PROJECT_FILE).is_file() else []
     return sorted(
-        found
-        for root in roots
-        for found in root.rglob("*.yaml")
-        if not any(part.startswith(".") for part in found.relative_to(root).parts[:-1])
+        project_file + [
+            found
+            for root in roots or [path]
+            for found in root.rglob("*.yaml")
+            if not any(part.startswith(".") for part in found.relative_to(root).parts[:-1])
+        ]
     )
 
 
@@ -70,13 +77,16 @@ def lint_command(
 
 def export_command(
     contract_paths: list[Path] = typer.Argument(..., help="One or more Fluvv contract YAML files."),
+    out: Path = typer.Option(
+        None, "--out", help="Where to write the spark_schemas/ and ingestion_config/ folders. Default: the repository's contracts folder."
+    ),
 ) -> None:
     """Export the Spark schema and ingestion_config JSON for one or more
-    contracts. They're written under the repository's contracts/, so each
-    contract must be inside one."""
+    contracts, at paths mirroring each contract's own under the repository's
+    contracts folder, so each contract must be inside one."""
     for contract_path in contract_paths:
         try:
-            result = export_artifacts(contract_path)
+            result = export_artifacts(contract_path, out_dir=out)
         except RepoRootNotFoundError as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1)
@@ -167,15 +177,16 @@ def list_products_command(
 
 def list_contracts_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's contracts."),
-    layer: str = typer.Option(None, "--layer", help="Only this layer's contracts: bronze, silver or gold."),
+    layer: str = typer.Option(None, "--layer", help="Only this layer's contracts."),
     product: str = typer.Option(None, "--product", help="Only this data product's contracts."),
     owner: str = typer.Option(None, "--owner", help="Only contracts this team owns."),
     manifest_path: Path = _manifest_option(),
 ) -> None:
-    """List contracts, bronze to gold, with each one's owner, data products
+    """List contracts, upstream first, with each one's owner, data products
     and freshness SLA."""
-    _check_known(layer, list(LAYERS), "--layer")
     project = _project(manifest_path)
+    if layer not in MEDALLION_LAYERS:
+        _check_known(layer, list(dict.fromkeys(c["layer"] for c in project.contracts() if c["layer"])), "--layer")
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     _check_known(product, [p["name"] for p in project.products()], "--product")
     _check_known(owner, _owners(project.contracts()), "--owner")
@@ -196,16 +207,16 @@ def list_columns_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's columns."),
     contract: str = typer.Option(None, "--contract", help="Only this contract's columns, by id."),
     classification: list[str] = typer.Option(
-        None, "--classification", help="Only columns classified so: public, internal, pii or sensitive-pii. Repeatable."
+        None, "--classification", help="Only columns classified so. Repeatable."
     ),
     manifest_path: Path = _manifest_option(),
 ) -> None:
-    """List columns, bronze to gold, with each one's type, glossary term
+    """List columns, upstream first, with each one's type, glossary term
     and classification: e.g. where personal data is, with --classification
     pii --classification sensitive-pii."""
-    for value in classification or []:
-        _check_known(value, list(CLASSIFICATIONS), "--classification")
     project = _project(manifest_path)
+    for value in classification or []:
+        _check_known(value, [c["name"] for c in project.classifications()], "--classification")
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     _check_known(contract, [c["id"] for c in project.contracts()], "--contract")
     typer.echo(views.columns(project, domain, contract, classification or None))
