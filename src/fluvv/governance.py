@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from fluvv.contract import (
-    LAYER_PROPERTIES,
+    LAYER_PROPERTY,
     contract_files,
     get_custom_property,
     governance_files,
@@ -38,10 +38,6 @@ DEFAULT_CLASSIFICATIONS = {
 """Each allowed value of a column's ODCS `classification` and the tag it
 becomes in a catalog, unless the repository defines its own list (SPEC.md
 Section 5.4)."""
-MEDALLION_LAYERS = ("bronze", "silver", "gold")
-"""Not a rule any more, but what 1.x promised for these names keeps holding:
-they sort in this order, and `--layer` takes them even where no contract has
-them."""
 
 DOMAIN_KIND = "Domain"
 GLOSSARY_KIND = "Glossary"
@@ -72,14 +68,8 @@ def load_contracts(repo_root: Path | str = ".") -> dict[Path, dict[str, Any]]:
     return {path.resolve(): load_odcs_document(path) for path in contract_files(repo_root)}
 
 
-def medallion_layer(doc: dict[str, Any]) -> str | None:
-    """The contract's layer label, if it has one (`fluvv.contract.
-    LAYER_PROPERTIES`). Keeps this name because it's supported API."""
-    for name in LAYER_PROPERTIES:
-        value = get_custom_property(doc, name)
-        if value is not None:
-            return value
-    return None
+def layer(doc: dict[str, Any]) -> str | None:
+    return get_custom_property(doc, LAYER_PROPERTY)
 
 
 def schema_object(doc: dict[str, Any]) -> dict[str, Any]:

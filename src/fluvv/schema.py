@@ -13,7 +13,15 @@ from typing import Any
 
 import jsonschema
 
-from fluvv.contract import FLUVV_CUSTOM_PROPERTIES, LAYER_PROPERTIES, OPTIONAL_FLUVV_CUSTOM_PROPERTIES, PROJECT_KIND, get_custom_property
+from fluvv.contract import (
+    FLUVV_CUSTOM_PROPERTIES,
+    LAYER_PROPERTY,
+    OPTIONAL_FLUVV_CUSTOM_PROPERTIES,
+    PROJECT_KIND,
+    RENAMED_LAYER_PROBLEM,
+    RENAMED_LAYER_PROPERTY,
+    get_custom_property,
+)
 
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 SCHEMA_PATH = SCHEMAS_DIR / "fluvv.schema.json"
@@ -23,7 +31,7 @@ _DEFINITION_BY_PROPERTY = {
     "transform": "Transform",
     "ingestion_config": "IngestionConfig",
     "businessMetrics": "BusinessMetrics",
-    **{property_name: "Layer" for property_name in LAYER_PROPERTIES},
+    LAYER_PROPERTY: "Layer",
 }
 _SCHEMA_FILE_BY_KIND = {
     "Domain": "domain.schema.json",
@@ -78,22 +86,17 @@ def custom_property_errors(doc: dict[str, Any]) -> list[str]:
     one missing, or any one present but not matching its schema. Optional
     ones are only shape-checked when present: a contract that omits them is
     still complete."""
-    errors = []
+    errors = [RENAMED_LAYER_PROBLEM] if get_custom_property(doc, RENAMED_LAYER_PROPERTY) is not None else []
     for property_name in FLUVV_CUSTOM_PROPERTIES:
         value = get_custom_property(doc, property_name)
         if value is None:
             errors.append(f"missing required customProperties entry '{property_name}'")
             continue
         errors += [f"{property_name}: {error.message}" for error in validate_custom_property(property_name, value)]
-    for property_name in OPTIONAL_FLUVV_CUSTOM_PROPERTIES:
+    for property_name in (*OPTIONAL_FLUVV_CUSTOM_PROPERTIES, LAYER_PROPERTY):
         value = get_custom_property(doc, property_name)
         if value is not None:
             errors += [f"{property_name}: {error.message}" for error in validate_custom_property(property_name, value)]
-    for property_name in LAYER_PROPERTIES:
-        value = get_custom_property(doc, property_name)
-        if value is not None:
-            errors += [f"{property_name}: {error.message}" for error in validate_custom_property(property_name, value)]
-            break  # only the one in use is the layer (fluvv.contract.LAYER_PROPERTIES)
     return errors
 
 

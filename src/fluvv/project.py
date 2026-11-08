@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-from fluvv.governance import DEFAULT_CLASSIFICATIONS, MEDALLION_LAYERS
+from fluvv.governance import DEFAULT_CLASSIFICATIONS
 from fluvv.manifest import read_or_compile
 
 
@@ -32,15 +32,12 @@ class Project:
         self.manifest = manifest if isinstance(manifest, dict) else read_or_compile(manifest, repo_root)
 
     def _ranks(self) -> dict[str, int]:
-        """What orders contracts, upstream first. Bronze, silver, gold where
-        every contract has one of them, as 1.x promised, whatever reads what.
-        Otherwise the names say nothing, so each contract's distance from
-        where its data enters: the longest chain of contracts upstream of it."""
+        """What orders contracts, upstream first: each one's distance from
+        where its data enters, the longest chain of contracts upstream of it.
+        Lineage, not layer names: a name says nothing about order."""
         contracts = self.manifest["contracts"]
-        if all(c["layer"] in MEDALLION_LAYERS for c in contracts):
-            return {c["id"]: MEDALLION_LAYERS.index(c["layer"]) for c in contracts}
         upstream: dict[str, list[str]] = {}
-        for edge in self.manifest["lineage"]["tables"]:
+        for edge in self.manifest.get("lineage", {}).get("tables", []):
             upstream.setdefault(edge["to"], []).append(edge["from"])
         depths: dict[str, int] = {}
 
@@ -85,7 +82,7 @@ class Project:
 
     def classifications(self) -> list[dict[str, Any]]:
         """Each value a column's `classification` may take, with the tag it
-        becomes in a catalog. A manifest from before fluvv 1.3 has no list,
+        becomes in a catalog. A manifest from before fluvv 2.0 has no list,
         and those repositories could only use the default one."""
         default = [{"name": name, "catalogTag": tag} for name, tag in DEFAULT_CLASSIFICATIONS.items()]
         return list(self.manifest.get("classifications", default))

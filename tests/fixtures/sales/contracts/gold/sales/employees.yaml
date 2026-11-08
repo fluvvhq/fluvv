@@ -125,7 +125,7 @@ team:
       role: expert
 
 customProperties:
-  - property: medallionLayer
+  - property: layer
     value: gold
   - property: businessMetrics
     value:

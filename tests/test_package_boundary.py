@@ -97,7 +97,7 @@ schema:
         required: true
         unique: true
 customProperties:
-  - property: medallionLayer
+  - property: layer
     value: bronze
   - property: sources
     value:

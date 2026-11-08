@@ -17,11 +17,14 @@ OPTIONAL_FLUVV_CUSTOM_PROPERTIES = ("transform", "businessMetrics")
 never raise MissingCustomPropertyError when absent -- a contract that
 doesn't set these is still a complete, valid Fluvv contract. (`transform`
 may only be omitted with a single source; lint checks that.)"""
-LAYER_PROPERTIES = ("medallionLayer", "layer")
-"""A contract's optional layer label, the first one set. `medallionLayer` is
-its name from before fluvv 1.3 and comes first: any customProperty was allowed
-then, so a contract with it may also have a `layer` that means something else.
-Not in the extension model: nothing about building a table needs it."""
+LAYER_PROPERTY = "layer"
+"""A contract's optional layer label. Not in the extension model: nothing
+about building a table needs it."""
+RENAMED_LAYER_PROPERTY = "medallionLayer"
+"""Its name before fluvv 2.0, known only to be refused. Read as no layer at
+all, a contract nobody renamed would quietly move its run records and catalog
+entries."""
+RENAMED_LAYER_PROBLEM = f"the `{RENAMED_LAYER_PROPERTY}` customProperty is now `{LAYER_PROPERTY}`; rename it"
 
 PROJECT_FILE = "fluvv.yaml"
 PROJECT_KIND = "Project"
@@ -162,6 +165,8 @@ def get_custom_property(doc: dict[str, Any], property_name: str) -> Any | None:
 def parse_extension(doc: dict[str, Any], contract_path: Path) -> FluvvExtension:
     """The extension exactly as written: sources that name a `contract`
     have no `location`/`format` yet. See resolve_extension()."""
+    if get_custom_property(doc, RENAMED_LAYER_PROPERTY) is not None:
+        raise ValueError(f"{contract_path}: {RENAMED_LAYER_PROBLEM}")
     values: dict[str, Any] = {}
     for property_name in FLUVV_CUSTOM_PROPERTIES:
         value = get_custom_property(doc, property_name)

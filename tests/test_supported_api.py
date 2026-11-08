@@ -1,6 +1,6 @@
 """The API code building on fluvv may rely on within a major version
-(README, Versioning). Fluvv Engine accepts any fluvv 1.x on the strength
-of it, so a change these tests catch breaks installed engines: it waits for
+(README, Versioning). Fluvv Engine accepts any fluvv of its major version on
+the strength of it, so a change these tests catch breaks installed engines: it waits for
 2.0, unless it only adds (a parameter with a default), in which case
 update the expected parameters here."""
 
@@ -33,7 +33,7 @@ FUNCTIONS = {
         "columns": "(doc)",
         "primary_key": "(doc)",
         "owner": "(doc)",
-        "medallion_layer": "(doc)",
+        "layer": "(doc)",
         "sla_entry": "(doc, property_name)",
         "retention_period": "(doc)",
         "freshness_period": "(doc)",

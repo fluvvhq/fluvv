@@ -101,7 +101,7 @@ team:
   name: sales-data-team
 
 customProperties:
-  - property: medallionLayer
+  - property: layer
     value: bronze
 
   # Fluvv ingestion config. See docs/fluvv/SPEC.md.

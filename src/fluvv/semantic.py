@@ -315,7 +315,7 @@ def _distinct_contract_issues(docs_by_path: dict[Path, dict[str, Any]], repo_roo
         groups.setdefault(("duplicate-contract-id", f"id '{doc['id']}' is used by more than one contract"), []).append(path)
         if target(doc):
             groups.setdefault(("duplicate-target", f"more than one contract writes to '{target(doc)}', and not all of them append"), []).append(path)
-        layer, domain, table = governance.medallion_layer(doc), doc.get("domain"), governance.schema_object(doc)["name"]
+        layer, domain, table = governance.layer(doc), doc.get("domain"), governance.schema_object(doc)["name"]
         groups.setdefault(("duplicate-target", f"more than one contract has table name '{table}', layer {layer!r} and domain {domain!r}"), []).append(path)
     return [
         ProjectIssue(path.relative_to(repo_root).as_posix(), code, message)

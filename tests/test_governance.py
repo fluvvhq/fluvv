@@ -27,7 +27,7 @@ def _doc(layer: str, columns: list[dict], **extra) -> dict:
         "id": f"{layer}.d.t",
         "domain": "d",
         "schema": [{"name": f"t_{layer}", "properties": columns}],
-        "customProperties": [{"property": "medallionLayer", "value": layer}],
+        "customProperties": [{"property": "layer", "value": layer}],
         **extra,
     }
 

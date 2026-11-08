@@ -7,10 +7,17 @@ version in [the spec](docs/fluvv/SPEC.md).
 ## [Unreleased]
 
 Fluvv no longer prescribes how a repository names, lays out and layers its
-contracts (spec v1.3.0). Every contract that was valid stays valid, except
-as listed under Added. Running one that uses `layer` instead of
-`medallionLayer`, has neither, or has no domain needs Fluvv Engine 1.2 or
+contracts (spec v2.0.0). This is a major release because a field is renamed:
+see Removed. Apart from that, every contract that was valid stays valid,
+except as listed under Added. Running these contracts needs Fluvv Engine 2.0 or
 later.
+
+### Removed
+
+- `medallionLayer`: rename the customProperty to `layer`. Lint, compile and
+  `Contract` refuse the old name rather than read it as no layer, which would
+  quietly move a contract's run records and catalog entries.
+- `fluvv.governance.medallion_layer`, now `fluvv.governance.layer`.
 
 ### Added
 
@@ -33,9 +40,7 @@ later.
 
 ### Changed
 
-- The layer is optional and can have any name. It's now the `layer`
-  customProperty; `medallionLayer` keeps working through 1.x, and wins if a
-  contract has both.
+- The layer is optional and can have any name.
 - `domain` is optional on contracts and glossaries, so the manifest's
   `domain` can be `null`. A domain that's named must still exist.
 - A contract `id` can be any unique string and a contract can sit anywhere
@@ -43,9 +48,12 @@ later.
   `unknown-medallion-layer` are gone.
 - `unknown-classification` moved from lint to compile, since the vocabulary
   is the repository's and lint sees one file at a time.
-- Where any contract's layer isn't bronze, silver or gold, `fluvv list
-  contracts` and `columns`, `fluvv impact` and `Project` order contracts by
-  lineage, upstream first. Bronze, silver and gold keep their order.
+- `fluvv list contracts` and `columns`, `fluvv impact` and `Project` order
+  contracts by lineage, upstream first, rather than bronze, silver, gold. A
+  repository whose layers each read the one before, as the example's do, sees
+  the same order.
+- `--layer` takes only a layer some contract has, as the other filters do;
+  `--layer gold` in a repository without gold contracts is now a usage error.
 
 ## [1.2.0] - 2026-11-05
 

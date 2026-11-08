@@ -10,7 +10,6 @@ import typer
 from fluvv import views
 from fluvv.contract import PROJECT_FILE, InvalidProjectFileError, Layout, RepoRootNotFoundError, project_layout
 from fluvv.export import export_artifacts
-from fluvv.governance import MEDALLION_LAYERS
 from fluvv.lint import lint
 from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
 from fluvv.project import Project
@@ -185,8 +184,7 @@ def list_contracts_command(
     """List contracts, upstream first, with each one's owner, data products
     and freshness SLA."""
     project = _project(manifest_path)
-    if layer not in MEDALLION_LAYERS:
-        _check_known(layer, list(dict.fromkeys(c["layer"] for c in project.contracts() if c["layer"])), "--layer")
+    _check_known(layer, list(dict.fromkeys(c["layer"] for c in project.contracts() if c["layer"])), "--layer")
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     _check_known(product, [p["name"] for p in project.products()], "--product")
     _check_known(owner, _owners(project.contracts()), "--owner")

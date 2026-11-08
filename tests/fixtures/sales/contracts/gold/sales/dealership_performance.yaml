@@ -115,7 +115,7 @@ team:
   name: sales-analytics-team
 
 customProperties:
-  - property: medallionLayer
+  - property: layer
     value: gold
   - property: businessMetrics
     value:

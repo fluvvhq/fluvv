@@ -14,7 +14,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from fluvv import Project, cli, export_artifacts, governance, manifest
+from fluvv import Contract, Project, cli, export_artifacts, governance, manifest
 from fluvv.contract import UnresolvableSourceError, find_repo_root, load_extension, project_layout
 from fluvv.lint import lint
 from fluvv.schema import SCHEMAS_DIR
@@ -114,14 +114,12 @@ def test_cli_shows_a_contract_without_layer_or_domain(tmp_path, monkeypatch):
     assert run("list", "contracts", "--layer", "platinum").exit_code == 2  # no contract has it
 
 
-def test_the_three_names_1x_always_took_still_work_where_no_contract_has_them(tmp_path, monkeypatch):
-    """A script looping over bronze, silver and gold keeps working: an empty
-    list, as in 1.2, not a usage error."""
+def test_medallion_names_are_no_more_known_to_layer_than_any_other(tmp_path, monkeypatch):
+    """A layer no contract has is a typo like any other, whatever it's called."""
     _repo(tmp_path, {"contracts/orders.yaml": _contract("orders", layer="bronze")})
     monkeypatch.chdir(tmp_path)
     result = CliRunner().invoke(cli.build_app(), ["list", "contracts", "--layer", "gold"])
-    assert result.exit_code == 0, result.output
-    assert len(result.output.splitlines()) == 1  # the header
+    assert result.exit_code == 2 and isinstance(result.exception, SystemExit), result.output
 
 
 def test_any_layer_name_works_and_contracts_list_upstream_first(tmp_path, monkeypatch):
@@ -143,31 +141,28 @@ def test_any_layer_name_works_and_contracts_list_upstream_first(tmp_path, monkey
     assert "  contracts       3 (raw 1, staging 1, marts 1)" in run("show", "shop").output.splitlines()
 
 
-def test_medallion_layers_keep_their_order_whatever_reads_what():
-    """1.x listed bronze, silver, gold, then by id. A silver reading a silver
-    and a gold reading landing would sort differently by lineage alone."""
+def test_medallion_names_order_by_lineage_like_any_other():
+    """A silver reading a silver and a gold reading straight from bronze sit
+    where the data puts them, not where their names would."""
     layers = {"bronze.a": "bronze", "silver.b": "silver", "silver.c": "silver", "gold.d": "gold", "gold.e": "gold"}
     contracts = [{"id": cid, "domain": None, "layer": layer, "owner": None, "dataProducts": []} for cid, layer in layers.items()]
     edges = [{"from": "bronze.a", "to": "silver.b"}, {"from": "silver.b", "to": "silver.c"}, {"from": "bronze.a", "to": "gold.d"}]
     project = Project(manifest={"contracts": contracts, "lineage": {"tables": edges, "columns": []}})
-    assert [c["id"] for c in project.contracts()] == list(layers)
+    assert [c["id"] for c in project.contracts()] == ["bronze.a", "gold.e", "gold.d", "silver.b", "silver.c"]
 
 
-def test_medallion_layer_wins_so_a_contracts_own_layer_property_means_what_it_did(tmp_path):
-    """Any customProperty was allowed before 1.3, so a contract may already
-    have one called `layer` for something else. Only one without
-    `medallionLayer`, which 1.2 would have refused, can mean ours by it."""
-    both = {"customProperties": [{"property": "medallionLayer", "value": "gold"}, {"property": "layer", "value": "presentation"}]}
-    assert governance.medallion_layer(both) == "gold"
-    assert governance.medallion_layer({"customProperties": both["customProperties"][1:]}) == "presentation"
-    assert governance.medallion_layer({"customProperties": []}) is None
-    assert [c["layer"] for c in Project(EXAMPLE).contracts(layer="gold")] == ["gold"] * 4  # the example still uses the old name
-
+def test_the_old_layer_name_is_refused_everywhere_rather_than_read_as_no_layer(tmp_path):
+    """A contract nobody renamed would otherwise quietly move its run records
+    and catalog entries, and `fluvv ingest` runs neither lint nor compile."""
     doc = _contract("orders")
-    doc["customProperties"] += [{"property": "medallionLayer", "value": "silver"}, {"property": "layer", "value": "not/a.label"}]
-    path = tmp_path / "orders.yaml"
-    path.write_text(yaml.safe_dump(doc))
-    assert lint(path).passed, lint(path).report()
+    doc["customProperties"].append({"property": "medallionLayer", "value": "silver"})
+    path = _repo(tmp_path, {"contracts/orders.yaml": doc}) / "contracts/orders.yaml"
+
+    assert any("is now `layer`" in e for e in lint(path).schema_errors), lint(path).report()
+    issues = run_project_checks(tmp_path)
+    assert _codes(issues) == [("contracts/orders.yaml", "fails-lint")] and "is now `layer`" in issues[0].message
+    with pytest.raises(ValueError, match="is now `layer`"):
+        Contract(path)
 
 
 @pytest.mark.parametrize("value", ["a/b", "a.b", ["raw"]])

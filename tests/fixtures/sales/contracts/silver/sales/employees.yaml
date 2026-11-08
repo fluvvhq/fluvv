@@ -113,7 +113,7 @@ team:
   name: sales-data-team
 
 customProperties:
-  - property: medallionLayer
+  - property: layer
     value: silver
   - property: businessMetrics
     value:

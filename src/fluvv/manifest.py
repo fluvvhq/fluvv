@@ -153,7 +153,7 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
             "id": doc["id"],
             "path": path.relative_to(repo_root).as_posix(),
             "domain": doc.get("domain"),
-            "layer": governance.medallion_layer(doc),
+            "layer": governance.layer(doc),
             "table": schema_object["name"],
             "physicalName": schema_object.get("physicalName"),
             "description": doc.get("description") or {},

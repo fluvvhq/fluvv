@@ -129,7 +129,7 @@ a command option or a manifest key isn't a breaking change.
     `parse_extension`, `resolve_extension`, `get_custom_property`,
     `RepoRootNotFoundError`
   - `fluvv.governance`: `load_contracts`, `schema_object`, `columns`,
-    `primary_key`, `owner`, `medallion_layer`, `sla_entry`,
+    `primary_key`, `owner`, `layer`, `sla_entry`,
     `retention_period`, `freshness_period`, `freshness_hours`
   - `fluvv.manifest`: `compile_manifest`, `write_manifest`,
     `load_manifest`, `check_fresh`, `read_or_compile`, `StaleManifestError`

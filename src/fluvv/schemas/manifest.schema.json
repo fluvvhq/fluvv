@@ -46,7 +46,7 @@
       "items": {
         "$ref": "#/$defs/Classification"
       },
-      "description": "Each value a column's `classification` may take, the repository's own or the default, with the tag it becomes in a catalog. Absent from a manifest compiled before fluvv 1.3, which means the default."
+      "description": "Each value a column's `classification` may take, the repository's own or the default, with the tag it becomes in a catalog. Absent from a manifest compiled before fluvv 2.0, which means the default."
     },
     "dataProducts": {
       "type": "array",

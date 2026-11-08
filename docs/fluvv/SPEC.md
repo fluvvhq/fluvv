@@ -1,6 +1,6 @@
 # Fluvv Spec
 
-> **Status:** v1.3.0 (contracts on ODCS v3.1.0). Normative, field-by-field
+> **Status:** v2.0.0 (contracts on ODCS v3.1.0). Normative, field-by-field
 > reference for Fluvv contracts and the governance files around them.
 
 ## 1. What Fluvv is
@@ -234,15 +234,13 @@ catalog.
 doesn't need one, and nothing about building or checking a table depends on
 it. Fluvv uses it to filter (`fluvv list contracts --layer`), and Fluvv
 Engine uses it, with the `domain`, to place run records and name catalog
-levels, by default. `bronze`, `silver` and `gold` also set an OpenMetadata
-Tier (gold → Tier1, silver → Tier2, bronze → Tier3); other names set none.
-Contracts list upstream first: bronze, silver, gold where every contract has
-one of those, and otherwise by lineage.
+levels, by default. No name means anything more than another: contracts
+list upstream first by lineage, whatever their layers are called, and no layer
+sets an OpenMetadata Tier.
 
-Its name before spec v1.3.0, `medallionLayer`, keeps working through fluvv
-1.x, and wins if a contract sets both: any `customProperty` was allowed before,
-so a contract with `medallionLayer` may have a `layer` that means something
-else.
+Before spec v2.0.0 this was the required `medallionLayer`. Lint and compile
+refuse that name and say to rename it, since reading it as no layer would
+quietly move a contract's run records and catalog entries.
 
 ### 3.7 Example
 
