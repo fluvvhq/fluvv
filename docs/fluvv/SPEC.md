@@ -181,7 +181,7 @@ a subquery filtered by the outer `WHERE` (see the example's
 
 Catalog registration (e.g. Unity Catalog) is **not** a contract field. Where
 a table gets registered depends on the environment, not the table, so it's
-chosen per run: `fluvv ingest --register unity_catalog_register`.
+chosen per run: `fluvv ingest --register metastore_register`.
 
 ### 3.4 `ingestion_config.mode`
 
