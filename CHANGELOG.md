@@ -4,7 +4,7 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
-## [Unreleased]
+## [2.0.0] - 2026-11-08
 
 Fluvv no longer prescribes how a repository names, lays out and layers its
 contracts (spec v2.0.0). This is a major release because a field is renamed:
