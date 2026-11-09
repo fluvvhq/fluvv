@@ -23,7 +23,7 @@ from fluvv.models import FluvvExtension
 
 if TYPE_CHECKING:
     from datacontract.model.run import Run
-    from fluvv_engine.openmetadata import SyncReport
+    from fluvv_engine import SyncReport
     from pyspark.sql import DataFrame, SparkSession
 
 

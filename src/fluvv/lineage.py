@@ -7,10 +7,9 @@
   are composed into one statement first (`effective_sql`), so lineage runs
   through both steps.
 
-Unlike the time-series history in `fluvv_engine.logs`, lineage is a
-structural fact about the current set of contract files: always
-re-derivable from them, so it's computed on demand here rather than
-persisted."""
+Unlike the run history Fluvv Engine records, lineage is a structural fact
+about the current set of contract files: always re-derivable from them,
+so it's computed on demand here rather than persisted."""
 
 from __future__ import annotations
 

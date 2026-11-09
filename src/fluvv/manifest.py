@@ -1,8 +1,8 @@
 """The manifest: one compiled, Spark-free JSON view of every contract and
 governance file in the repo, plus what's derived from them (lineage,
 glossary synonyms). Like dbt's `manifest.json`, it's the single input an
-integration reads instead of re-deriving everything from YAML -- the
-OpenMetadata push (`fluvv_engine.openmetadata`) reads nothing else from the repo.
+integration reads instead of re-deriving everything from YAML -- Fluvv
+Engine's OpenMetadata push reads nothing else from the repo.
 Each contract entry also carries the contract as written (`odcs`) and its
 resolved ingestion config with the composed SQL (`ingestion`), the way
 dbt's manifest carries each node's source. Validated by
