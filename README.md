@@ -142,7 +142,9 @@ a command option or a manifest key isn't a breaking change.
 
 - [The spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md):
   the contract format, governance files, lint codes and manifest.
-- [fluvv.se/docs](https://fluvv.se/docs): guides and reference.
+- [fluvv.se/docs](https://fluvv.se/docs): guides and reference, including
+  a page for each class and function in the
+  [Python API](https://fluvv.se/docs/python-api).
 - [fluvv-example](https://github.com/fluvvhq/fluvv-example): a complete
   repository to clone, from landing CSVs to gold tables in ten contracts.
 

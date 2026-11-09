@@ -45,9 +45,13 @@ class UnresolvableSourceError(ValueError):
 
 
 class RepoRootNotFoundError(FileNotFoundError):
-    """A file outside any Fluvv repository was given to something that
-    needs the files around it: resolving upstream sources, or writing the
-    generated files under `contracts/`. Lint never raises it."""
+    """A file outside any Fluvv repository was given to something that needs the repository.
+
+    Raised where the files around a contract are needed, resolving its
+    upstream sources or writing its generated files, when no folder above
+    it holds a `fluvv.yaml`, a `contracts/` or a `governance/` folder. Lint
+    never raises it.
+    """
 
 
 class InvalidProjectFileError(RepoRootNotFoundError, ValueError):
@@ -204,6 +208,41 @@ def resolve_extension(extension: FluvvExtension, repo_root: Path) -> FluvvExtens
 
 
 def load_extension(contract_path: Path, resolve: bool = True) -> FluvvExtension:
+    """Reads a contract's Fluvv properties and validates them.
+
+    Parameters
+    ----------
+    contract_path : Path or str
+        The contract.
+    resolve : bool, default True
+        Fill in each contract-backed source's `location` and `format` from
+        its upstream contract's `servers`, as a run reads them. Without it,
+        they're as written: `None` unless the contract sets them.
+
+    Returns
+    -------
+    FluvvExtension
+        The contract's `sources`, `transform`, `ingestion_config` and
+        `businessMetrics`.
+
+    Raises
+    ------
+    ValueError
+        If the properties are missing or malformed, or a source can't be
+        resolved.
+    RepoRootNotFoundError
+        If `resolve` is set and the contract isn't in a repository.
+
+    Examples
+    --------
+    >>> from fluvv import load_extension
+    >>> extension = load_extension("contracts/silver/sales/cars.yaml")
+    >>> source = extension.sources[0]
+    >>> source.contract, source.location, source.format
+    ('contracts/bronze/sales/cars.yaml', './data/bronze/sales/cars', 'delta')
+    >>> extension.ingestion_config.mode
+    'overwrite'
+    """
     contract_path = Path(contract_path)
     doc = load_odcs_document(contract_path)
     extension = parse_extension(doc, contract_path)

@@ -31,7 +31,13 @@ DEFAULT_PATH = Path("target") / "manifest.json"
 
 
 class StaleManifestError(ValueError):
-    pass
+    """A prebuilt manifest is older than the repository's files.
+
+    Raised when a manifest file is read where the repository is too, such
+    as `Project(manifest=...)` or a command's `--manifest`, and a contract,
+    governance file or the project file changed since it was compiled.
+    Run `fluvv compile` again.
+    """
 
 
 def source_hash(repo_root: Path) -> str:

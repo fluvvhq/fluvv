@@ -8,8 +8,19 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Transform(BaseModel):
-    """A SQL step: per source (shapes that one source) or contract-level
-    (combines the sources into this contract's table)."""
+    """A SQL step, per source or at the contract level.
+
+    A per-source transform shapes that one source; the contract-level one
+    combines the sources into the contract's table. See
+    [Transforms](https://fluvv.se/docs/transforms).
+
+    Attributes
+    ----------
+    engine : str
+        `"pyspark-sql"`.
+    sql : str
+        The query.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -18,7 +29,30 @@ class Transform(BaseModel):
 
 
 class Source(BaseModel):
-    """One upstream input, read and registered as a temp view named `id`."""
+    """One of a contract's `sources`: an input, read as a view named `id`.
+
+    The fields are those in
+    [Contract fields](https://fluvv.se/docs/contract-fields).
+
+    Attributes
+    ----------
+    id : str
+        The view's name in transforms.
+    contract : str or None
+        The upstream contract's file, or `None` for a source no contract
+        describes, such as a landing zone.
+    location : str or None
+        Where it's read from. Filled in from the upstream contract when
+        resolved.
+    format : str or None
+        Its format, e.g. `"delta"` or `"csv"`. Filled in like `location`.
+    options : dict
+        Reader options.
+    read : str
+        The read strategy, by name.
+    transform : Transform or None
+        Its per-source transform.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -39,12 +73,20 @@ class Source(BaseModel):
 
 
 class IngestionConfig(BaseModel):
-    """Names the ingestion framework's writer function for this contract's
-    target. Catalog registration is not here: it depends on the environment,
-    not the table, so it's chosen per run (`fluvv ingest --register`)."""
+    """How a contract's table is written: its `ingestion_config`.
+
+    Attributes
+    ----------
+    write : str
+        The write strategy, by name.
+    mode : str
+        `"overwrite"`, the default, or `"append"`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
+    # Catalog registration is not here: it depends on the environment, not
+    # the table, so it's chosen per run (`fluvv ingest --register`).
     write: str
     mode: Literal["overwrite", "append"] = "overwrite"
     """Spark write mode for this contract's target. Defaults to
@@ -84,7 +126,27 @@ class BusinessMetric(BaseModel):
 
 
 class FluvvExtension(BaseModel):
-    """The Fluvv `customProperties` entries, parsed and validated."""
+    """A contract's Fluvv properties, parsed and validated.
+
+    The `customProperties` Fluvv adds to ODCS, described in
+    [Contract fields](https://fluvv.se/docs/contract-fields).
+
+    Attributes
+    ----------
+    sources : list of Source
+        The contract's inputs.
+    transform : Transform or None
+        The contract-level transform.
+    ingestion_config : IngestionConfig
+        How the table is written.
+    business_metrics : list
+        Its `businessMetrics`, each with a `name`, `sql`, `metric_type` and
+        `unit`.
+
+    See Also
+    --------
+    load_extension : Reads one from a contract file.
+    """
 
     sources: list[Source]
     transform: Transform | None = None

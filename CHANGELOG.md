@@ -4,6 +4,15 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
+## [Unreleased]
+
+### Added
+
+- A docstring for everything `fluvv` exports and every error it raises,
+  with parameters, what it returns and raises, and examples, so `help()`
+  is a reference. The examples run as tests, and the
+  [Python API](https://fluvv.se/docs/python-api) pages are made from them.
+
 ## [2.0.0] - 2026-11-08
 
 Fluvv no longer prescribes how a repository names, lays out and layers its

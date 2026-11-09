@@ -23,6 +23,19 @@ from fluvv.contract import find_repo_root, load_odcs_document, parse_extension, 
 
 @dataclass
 class ExportResult:
+    """The files `export_artifacts` wrote for one contract.
+
+    Attributes
+    ----------
+    contract_path : Path
+        The contract they were generated from.
+    spark_schema_path : Path
+        The contract's schema as a PySpark `StructType`.
+    ingestion_config_path : Path
+        Its sources, transforms and `ingestion_config` as JSON, with each
+        upstream contract's location and format filled in.
+    """
+
     contract_path: Path
     spark_schema_path: Path
     ingestion_config_path: Path
@@ -35,8 +48,44 @@ def _relative_stem(contract_path: Path, contracts_dir: Path) -> Path:
 def export_artifacts(
     contract_path: Path | str, repo_root: Path | str | None = None, out_dir: Path | str | None = None
 ) -> ExportResult:
-    """`out_dir`: where the two generated folders go, by default inside the
-    repository's contracts folder."""
+    """Writes a contract's generated files, like `fluvv export <file>`.
+
+    A Spark schema under `spark_schemas/` and a resolved ingestion config
+    under `ingestion_config/`, each at the contract's own path relative to
+    the contracts folder, e.g. `contracts/silver/sales/cars.yaml` gives
+    `spark_schemas/silver/sales/cars.py`. Existing files are overwritten.
+
+    Parameters
+    ----------
+    contract_path : Path or str
+        The contract.
+    repo_root : Path or str, optional
+        The repository the contract is in. Found from `contract_path` if
+        not given.
+    out_dir : Path or str, optional
+        Where the two folders go. The repository's contracts folder if not
+        given.
+
+    Returns
+    -------
+    ExportResult
+        The paths written.
+
+    Raises
+    ------
+    RepoRootNotFoundError
+        If `repo_root` isn't given and `contract_path` isn't in a
+        repository.
+
+    Examples
+    --------
+    >>> from fluvv import export_artifacts
+    >>> result = export_artifacts("contracts/silver/sales/cars.yaml")
+    >>> result.spark_schema_path
+    PosixPath('.../contracts/spark_schemas/silver/sales/cars.py')
+    >>> result.ingestion_config_path
+    PosixPath('.../contracts/ingestion_config/silver/sales/cars.json')
+    """
     contract_path = Path(contract_path)
     repo_root = Path(repo_root) if repo_root is not None else find_repo_root(contract_path)
     contracts_dir = repo_root / project_layout(repo_root).contracts

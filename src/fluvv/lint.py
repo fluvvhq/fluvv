@@ -24,6 +24,29 @@ from fluvv.semantic import SemanticIssue, run_governance_file_checks, run_semant
 
 @dataclass
 class LintResult:
+    """What lint found in one file.
+
+    Attributes
+    ----------
+    contract_path : Path
+        The file linted.
+    odcs_errors : list of str
+        Where the file breaks ODCS.
+    schema_errors : list of str
+        Where its Fluvv properties don't have the shape the spec gives
+        them, or the file isn't valid YAML.
+    semantic_issues : list
+        Breaches of Fluvv's rules within the file, each with a `code` and a
+        `message`. The codes are in
+        [Lint and compile codes](https://fluvv.se/docs/lint-and-compile-codes).
+    passed : bool
+        Whether the file passed: nothing in any of the lists.
+
+    See Also
+    --------
+    lint : Lints a file and returns this.
+    """
+
     contract_path: Path
     odcs_errors: list[str] = field(default_factory=list)
     schema_errors: list[str] = field(default_factory=list)
@@ -31,9 +54,24 @@ class LintResult:
 
     @property
     def passed(self) -> bool:
+        """Whether the file passed: nothing in any of the lists."""
         return not (self.odcs_errors or self.schema_errors or self.semantic_issues)
 
     def report(self) -> str:
+        """The text `fluvv lint` prints for this file.
+
+        Returns
+        -------
+        str
+            `<file>: PASSED`, or `<file>: FAILED` followed by one line per
+            problem, each tagged with where it comes from.
+
+        Examples
+        --------
+        >>> from fluvv import lint
+        >>> print(lint("contracts/silver/sales/cars.yaml").report())
+        contracts/silver/sales/cars.yaml: PASSED
+        """
         if self.passed:
             return f"{self.contract_path}: PASSED"
 
@@ -45,8 +83,37 @@ class LintResult:
 
 
 def lint(contract_path: Path | str) -> LintResult:
-    """Lint a contract, a governance file or the project file (dispatched
-    on its `kind`)."""
+    """Lints one contract, governance file or project file, like `fluvv lint <file>`.
+
+    Judges the file on its own: against ODCS or its governance file schema,
+    then against Fluvv's rules for a single file. Whether its references
+    resolve, to domains, glossary terms or upstream contracts, is checked
+    when the repository compiles. A file that isn't valid YAML fails
+    rather than raising.
+
+    Parameters
+    ----------
+    contract_path : Path or str
+        The file. Its `kind` says what it is.
+
+    Returns
+    -------
+    LintResult
+        What lint found. `passed` says whether the file passed.
+
+    See Also
+    --------
+    Contract.lint : The same check, on a loaded contract.
+    Project : Compiles the repository, which checks references.
+
+    Examples
+    --------
+    >>> from fluvv import lint
+    >>> lint("contracts/silver/sales/cars.yaml").passed
+    True
+    >>> lint("governance/domains/sales.yaml").passed
+    True
+    """
     contract_path = Path(contract_path)
     try:
         doc = load_odcs_document(contract_path)

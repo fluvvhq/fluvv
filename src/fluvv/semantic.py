@@ -70,17 +70,37 @@ class ProjectIssue:
 
 
 class ProjectCheckError(ValueError):
-    """The repository's files don't fit together; raised by
-    `fluvv.manifest.compile_manifest` instead of compiling them."""
+    """The repository's files don't fit together, so it doesn't compile.
+
+    Raised instead of compiling, by `fluvv compile` and by anything that
+    compiles the repository, such as `Project`. Its message is the report
+    `fluvv compile` prints. The codes are in
+    [Lint and compile codes](https://fluvv.se/docs/lint-and-compile-codes).
+
+    Attributes
+    ----------
+    issues : list
+        Each problem, with the `path` of the file it's in, a `code` and a
+        `message`.
+    """
 
     def __init__(self, issues: list[ProjectIssue]):
         self.issues = issues
         super().__init__(self.report())
 
     def report(self) -> str:
-        """One entry per distinct problem: the same code and message in
-        several files (one missing domain file named by every contract) is
-        reported once, with the files it's in."""
+        """The text `fluvv compile` prints for these problems, which is also the error's message.
+
+        One entry per distinct problem: the same code and message in
+        several files, such as one missing domain file named by every
+        contract, is reported once, with the files it's in.
+
+        Returns
+        -------
+        str
+            A count of the problems, then one line for each, with its file
+            and code.
+        """
         groups: dict[tuple[str, str], list[str]] = {}
         for issue in self.issues:
             groups.setdefault((issue.code, issue.message), []).append(issue.path)
