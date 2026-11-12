@@ -5,7 +5,11 @@ integration reads instead of re-deriving everything from YAML -- Fluvv
 Engine's OpenMetadata push reads nothing else from the repo.
 Each contract entry also carries the contract as written (`odcs`) and its
 resolved ingestion config with the composed SQL (`ingestion`), the way
-dbt's manifest carries each node's source. Validated by
+dbt's manifest carries each node's source. `server` and `ingestion` are as
+a run on the server it's compiled for uses them, with variables filled in
+(fluvv.variables); `odcs` stays as written, as datacontract-cli publishes a
+contract, and so do the server's custom properties, where a credential
+could otherwise be filled in. Validated by
 fluvv/schemas/manifest.schema.json. See docs/fluvv/SPEC.md Section 7.
 
 Generated, never edited, and not committed: `fluvv compile` writes it
@@ -24,7 +28,8 @@ from typing import Any
 
 from fluvv import governance, lineage
 from fluvv.contract import PROJECT_FILE, TARGET_DIR, contract_files, get_custom_property, governance_files, parse_extension, resolve_extension
-from fluvv.semantic import ProjectCheckError, run_project_checks
+from fluvv.semantic import ProjectCheckError, resolve_contracts, run_project_checks
+from fluvv.variables import environment
 
 MANIFEST_VERSION = "2"
 DEFAULT_PATH = TARGET_DIR / "manifest.json"
@@ -78,10 +83,12 @@ def _upstream_docs(doc: dict[str, Any], repo_root: Path, docs_by_path: dict[Path
     return upstream
 
 
-def _ingestion(doc: dict[str, Any], path: Path, repo_root: Path, id_by_path: dict[Path, str]) -> dict[str, Any]:
+def _ingestion(
+    doc: dict[str, Any], path: Path, repo_root: Path, id_by_path: dict[Path, str], server: str | None, variables: dict[str, str]
+) -> dict[str, Any]:
     """The resolved ingestion config, plus the one statement equivalent to
     every per-source transform followed by the contract-level one."""
-    extension = resolve_extension(parse_extension(doc, path), repo_root)
+    extension = resolve_extension(parse_extension(doc, path), repo_root, server, variables)
     sources = [
         {
             "id": s.id,
@@ -104,14 +111,14 @@ def _ingestion(doc: dict[str, Any], path: Path, repo_root: Path, id_by_path: dic
     }
 
 
-def _relationships(doc: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]:
+def _relationships(doc: dict[str, Any], repo_root: Path, docs_by_path: dict[Path, dict[str, Any]]) -> list[dict[str, Any]]:
     """ODCS v3.1.0 relationships, resolved to target contract ids and
     column names. Unresolvable ones are skipped here: compile_manifest has
     already refused them (`relationship-target-not-found`)."""
     resolved = []
     for from_columns, to_refs in governance.relationships(doc):
         try:
-            targets = [governance.resolve_reference(ref, doc, repo_root) for ref in to_refs]
+            targets = [governance.resolve_reference(ref, doc, repo_root, docs_by_path) for ref in to_refs]
         except governance.InvalidReferenceError:
             continue
         resolved.append({
@@ -122,16 +129,23 @@ def _relationships(doc: dict[str, Any], repo_root: Path) -> list[dict[str, Any]]
     return resolved
 
 
-def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
-    """Raises ProjectCheckError, listing every broken reference, if the
-    repository's files don't fit together."""
+def compile_manifest(
+    repo_root: Path | str = ".", server: str | None = None, variables: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """The manifest for a run on `server` (each contract's first server if
+    not given), with variables filled in from `variables`
+    (fluvv.variables.environment() if not given). Raises ProjectCheckError,
+    listing every broken reference, if the repository's files don't fit
+    together."""
     repo_root = Path(repo_root).resolve()
-    if issues := run_project_checks(repo_root):
+    variables = environment() if variables is None else variables
+    if issues := run_project_checks(repo_root, server, variables):
         raise ProjectCheckError(issues)
-    docs_by_path = governance.load_contracts(repo_root)
+    as_written = governance.load_contracts(repo_root)
+    docs_by_path, _ = resolve_contracts(as_written, repo_root, server, variables)
     docs = list(docs_by_path.values())
     gov = governance.load_governance(repo_root)
-    graph = lineage.build_lineage_graph(repo_root)
+    graph = lineage.build_lineage_graph(repo_root, docs_by_path)
 
     id_by_path = {path: doc["id"] for path, doc in docs_by_path.items()}
     contracts = []
@@ -168,15 +182,15 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
             "tags": doc.get("tags") or [],
             "retention": governance.retention_period(doc),
             "freshness": governance.freshness_period(doc),
-            "relationships": _relationships(doc, repo_root),
+            "relationships": _relationships(doc, repo_root, docs_by_path),
             "primaryKey": governance.primary_key(doc),
             "dataProducts": governance.products_of(gov, doc["id"]),
             "server": doc["servers"][0],
             "upstream": graph.get(doc["id"], {}).get("upstream", []),
             "downstream": graph.get(doc["id"], {}).get("downstream", []),
             "columns": [_column(p, derived.get(p["name"])) for p in governance.columns(doc)],
-            "ingestion": _ingestion(doc, path, repo_root, id_by_path),
-            "odcs": doc,
+            "ingestion": _ingestion(doc, path, repo_root, id_by_path, server, variables),
+            "odcs": as_written[path],
         })
 
     return {
@@ -220,10 +234,12 @@ def compile_manifest(repo_root: Path | str = ".") -> dict[str, Any]:
     }
 
 
-def write_manifest(repo_root: Path | str = ".", out: Path | str | None = None) -> Path:
+def write_manifest(
+    repo_root: Path | str = ".", out: Path | str | None = None, server: str | None = None, variables: dict[str, str] | None = None
+) -> Path:
     repo_root = Path(repo_root)
     out = Path(out) if out is not None else repo_root / DEFAULT_PATH
-    compiled = compile_manifest(repo_root)  # first: a failed compile leaves nothing behind
+    compiled = compile_manifest(repo_root, server, variables)  # first: a failed compile leaves nothing behind
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(compiled, indent=2, ensure_ascii=False) + "\n")
     return out
@@ -251,9 +267,10 @@ def check_fresh(manifest: dict[str, Any], repo_root: Path | str = ".") -> None:
         raise StaleManifestError("the manifest is stale: contracts or governance files changed since it was compiled; run `fluvv compile`")
 
 
-def read_or_compile(path: Path | str | None = None, repo_root: Path | str = ".") -> dict[str, Any]:
+def read_or_compile(path: Path | str | None = None, repo_root: Path | str = ".", server: str | None = None) -> dict[str, Any]:
     """The manifest a command works from: compiled from `repo_root` on
-    the spot, or, given `path`, that prebuilt file, refused if it's stale.
+    the spot for `server`, or, given `path`, that prebuilt file, refused if
+    it's stale.
     Compiling by default means a command never shows an out-of-date
     target/manifest.json; `path` is for a machine holding only the
     manifest, or a repo large enough that compiling each time is slow.
@@ -261,7 +278,7 @@ def read_or_compile(path: Path | str | None = None, repo_root: Path | str = ".")
     StaleManifestError (a ValueError, like a file this version can't read)
     if `path` is stale; either names the file."""
     if path is None:
-        return compile_manifest(repo_root)
+        return compile_manifest(repo_root, server)
     manifest = load_manifest(path)
     try:
         check_fresh(manifest, repo_root)

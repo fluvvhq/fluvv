@@ -51,6 +51,10 @@ dependencies = [
     "sqlglot>=28,<31",
     "typer>=0.18,<1",
     "pydantic>=2.8.2,<3",
+    # Reads a .env file the way datacontract-cli does (its own dependency,
+    # in the same range), so a contract's variables take the same values in
+    # both: fluvv.variables.
+    "python-dotenv>=1,<2",
 ]
 
 [project.optional-dependencies]

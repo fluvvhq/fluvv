@@ -9,7 +9,7 @@ import json
 from functools import lru_cache
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import jsonschema
 
@@ -22,6 +22,7 @@ from fluvv.contract import (
     RENAMED_LAYER_PROPERTY,
     get_custom_property,
 )
+from fluvv.variables import contains_variables
 
 SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 SCHEMA_PATH = SCHEMAS_DIR / "fluvv.schema.json"
@@ -72,7 +73,7 @@ def validate_custom_property(
     """Validate one Fluvv customProperty's value. `property_name` must be a
     key of `_DEFINITION_BY_PROPERTY` above."""
     definition_name = _DEFINITION_BY_PROPERTY[property_name]
-    return sorted(_validator(definition_name).iter_errors(value), key=str)
+    return checked_once_filled_in(_validator(definition_name).iter_errors(value))
 
 
 def validate_governance_document(doc: dict[str, Any]) -> list[jsonschema.exceptions.ValidationError]:
@@ -119,5 +120,39 @@ def odcs_errors(doc: dict[str, Any]) -> list[str]:
         return []
     return [
         f"{'/'.join(map(str, error.absolute_path)) or '(root)'}: {error.message}"
-        for error in sorted(validator.iter_errors(doc), key=str)
+        for error in checked_once_filled_in(validator.iter_errors(doc))
+    ]
+
+
+def odcs_error_paths(doc: dict[str, Any]) -> list[str]:
+    """Where `odcs_errors` points, without the values there, which may have
+    come from variables and so be secrets."""
+    validator = _odcs_validator(str(doc.get("apiVersion", "")))
+    if validator is None:
+        return []
+    return ["/".join(map(str, error.absolute_path)) or "(root)" for error in checked_once_filled_in(validator.iter_errors(doc))]
+
+
+def custom_property_error_paths(doc: dict[str, Any]) -> list[str]:
+    """Where `custom_property_errors` points, without the values there."""
+    paths = []
+    for property_name in (*FLUVV_CUSTOM_PROPERTIES, *OPTIONAL_FLUVV_CUSTOM_PROPERTIES, LAYER_PROPERTY):
+        value = get_custom_property(doc, property_name)
+        if value is not None:
+            paths += ["/".join([property_name, *map(str, error.absolute_path)]) for error in validate_custom_property(property_name, value)]
+    return paths
+
+
+def checked_once_filled_in(errors: Iterable[jsonschema.exceptions.ValidationError]) -> list[jsonschema.exceptions.ValidationError]:
+    """`errors`, sorted, without those a `${VAR}` causes in a field with a
+    fixed set of values, or in the object whose schema branch it selects:
+    datacontract-cli checks those once the variable is filled in, so a file
+    isn't wrong as written for holding one."""
+    errors = sorted(errors, key=str)
+    deferred = [error for error in errors if error.validator == "enum" and contains_variables(error.instance)]
+    deferred_objects = {tuple(error.absolute_path)[:-1] for error in deferred}
+    return [
+        error
+        for error in errors
+        if error not in deferred and not (error.validator == "unevaluatedProperties" and tuple(error.absolute_path) in deferred_objects)
     ]

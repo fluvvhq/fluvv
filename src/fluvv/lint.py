@@ -12,14 +12,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 from datacontract.data_contract import DataContract
 from datacontract.model.run import ResultEnum
+from pydantic import ValidationError
 
-from fluvv.contract import MissingCustomPropertyError, load_odcs_document, parse_extension, yaml_problem
+from fluvv.contract import MissingCustomPropertyError, get_custom_property, load_odcs_document, parse_extension, yaml_problem
+from fluvv.models import FluvvExtension, Source, Transform
 from fluvv.schema import SCHEMA_KINDS, custom_property_errors, odcs_errors, validate_governance_document
-from fluvv.semantic import SemanticIssue, run_governance_file_checks, run_semantic_checks
+from fluvv.semantic import SemanticIssue, run_governance_file_checks, run_semantic_checks, variables_only
+from fluvv.variables import with_defaults
 
 
 @dataclass
@@ -141,14 +145,37 @@ def lint(contract_path: Path | str) -> LintResult:
     # They read the ODCS structure (schema objects, columns, team), so they
     # also wait for that to be valid; step 1 has said what's wrong with it.
     if not result.schema_errors and not odcs_errors(doc):
+        as_written = with_defaults(doc)
         try:
-            extension = parse_extension(doc, contract_path)
+            extension = parse_extension(as_written, contract_path)
         except MissingCustomPropertyError as exc:
             result.schema_errors.append(str(exc))
+        except ValidationError as exc:
+            # A variable with no default, where only fixed values are allowed,
+            # is judged once filled in, as the schema step judges it. Step 2
+            # has checked the shape, so the rest is judged without it.
+            if not variables_only(exc):
+                raise
+            result.semantic_issues = run_semantic_checks(_unvalidated_extension(as_written), doc)
         else:
+            # The contract's own fields as written: an SLA holding a variable
+            # is judged once filled in.
             result.semantic_issues = run_semantic_checks(extension, doc)
 
     return result
+
+
+def _unvalidated_extension(doc: dict[str, Any]) -> FluvvExtension:
+    """The sources and transforms the semantic checks read, built without
+    the model's checks, for a contract whose shape the schema has passed."""
+    def transform(value: Any) -> Transform | None:
+        return Transform.model_construct(**value) if isinstance(value, dict) else None
+
+    sources = [
+        Source.model_construct(**{**source, "transform": transform(source.get("transform"))})
+        for source in get_custom_property(doc, "sources") or []
+    ]
+    return FluvvExtension.model_construct(sources=sources, transform=transform(get_custom_property(doc, "transform")))
 
 
 def lint_governance_file(path: Path, raw: dict) -> LintResult:

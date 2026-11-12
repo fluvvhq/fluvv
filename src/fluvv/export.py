@@ -18,9 +18,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
 from datacontract.data_contract import DataContract
 
 from fluvv.contract import TARGET_DIR, find_repo_root, load_odcs_document, parse_extension, project_layout, resolve_extension
+from fluvv.semantic import filled_in_problem
+from fluvv.variables import InvalidVariableValueError, environment, resolve_contract, uses_variables
 
 
 @dataclass
@@ -48,7 +51,7 @@ def _relative_stem(contract_path: Path, contracts_dir: Path) -> Path:
 
 
 def export_artifacts(
-    contract_path: Path | str, repo_root: Path | str | None = None, out_dir: Path | str | None = None
+    contract_path: Path | str, repo_root: Path | str | None = None, out_dir: Path | str | None = None, server: str | None = None
 ) -> ExportResult:
     """Writes a contract's generated files, like `fluvv export <file>`.
 
@@ -56,8 +59,9 @@ def export_artifacts(
     under `ingestion_config/`, in the repository's `target/` folder unless
     `out_dir` names another, each at the contract's own path relative to the
     contracts folder, e.g. `contracts/silver/sales/cars.yaml` gives
-    `target/spark_schemas/silver/sales/cars.py`. Existing files are
-    overwritten.
+    `target/spark_schemas/silver/sales/cars.py`. Both hold the contract as
+    a run on `server` uses it, with its variables filled in. Existing files
+    are overwritten.
 
     Parameters
     ----------
@@ -69,6 +73,9 @@ def export_artifacts(
     out_dir : Path or str, optional
         Where the two folders go. The repository's `target/` folder if not
         given.
+    server : str, optional
+        The server a run uses, by its `server` name. Without it, the
+        contract's first.
 
     Returns
     -------
@@ -80,6 +87,13 @@ def export_artifacts(
     RepoRootNotFoundError
         If `repo_root` isn't given and `contract_path` isn't in a
         repository.
+    UnresolvedVariableError
+        If a variable has no value and no default.
+    UnknownServerError
+        If the contract, or an upstream one, has more than one server and
+        none called `server`.
+    InvalidVariableValueError
+        If a value a variable filled in isn't one its field allows.
 
     Examples
     --------
@@ -96,14 +110,18 @@ def export_artifacts(
     rel_stem = _relative_stem(contract_path, contracts_dir)
     out = Path(out_dir) if out_dir is not None else repo_root / TARGET_DIR
 
-    data_contract = DataContract(data_contract_file=str(contract_path))
+    variables = environment()
+    as_written = load_odcs_document(contract_path)
+    doc = resolve_contract(as_written, server, variables)
+    if uses_variables(as_written, server) and (problem := filled_in_problem(doc, contract_path)):
+        raise InvalidVariableValueError(f"{contract_path}: {problem}")
+    extension = resolve_extension(parse_extension(doc, contract_path), repo_root, server, variables)
+    data_contract = DataContract(data_contract_str=yaml.safe_dump(doc, sort_keys=False))
 
     spark_schema_path = (out / "spark_schemas" / rel_stem).with_suffix(".py")
     spark_schema_path.parent.mkdir(parents=True, exist_ok=True)
     spark_schema_path.write_text(data_contract.export("spark"))
 
-    doc = load_odcs_document(contract_path)
-    extension = resolve_extension(parse_extension(doc, contract_path), repo_root)
     ingestion_config_path = (out / "ingestion_config" / rel_stem).with_suffix(".json")
     ingestion_config_path.parent.mkdir(parents=True, exist_ok=True)
     ingestion_config_path.write_text(extension.model_dump_json(by_alias=True, indent=2) + "\n")

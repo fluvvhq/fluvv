@@ -14,6 +14,7 @@ from fluvv.lint import lint
 from fluvv.manifest import DEFAULT_PATH as DEFAULT_MANIFEST_PATH, write_manifest
 from fluvv.project import Project
 from fluvv.semantic import ProjectCheckError
+from fluvv.variables import InvalidVariableValueError, UnknownServerError, UnresolvedVariableError
 
 # Installed packages add commands to the `fluvv` CLI by registering a
 # `register(app)` function under this entry-point group. Fluvv Engine adds
@@ -74,11 +75,18 @@ def lint_command(
     raise typer.Exit(code=0 if all_passed else 1)
 
 
+_SERVER_OPTION_HELP = (
+    "The server to use, by its `server` name, as datacontract-cli's --server takes it; "
+    "its variables are filled in from the environment and .env. Default: each contract's first."
+)
+
+
 def export_command(
     contract_paths: list[Path] = typer.Argument(..., help="One or more Fluvv contract YAML files."),
     out: Path = typer.Option(
         None, "--out", help="Where to write the spark_schemas/ and ingestion_config/ folders. Default: the repository's target/ folder."
     ),
+    server: str = typer.Option(None, "--server", help=_SERVER_OPTION_HELP),
 ) -> None:
     """Export the Spark schema and ingestion_config JSON for one or more
     contracts to the repository's target/ folder, at paths mirroring each
@@ -86,8 +94,8 @@ def export_command(
     inside one."""
     for contract_path in contract_paths:
         try:
-            result = export_artifacts(contract_path, out_dir=out)
-        except RepoRootNotFoundError as exc:
+            result = export_artifacts(contract_path, out_dir=out, server=server)
+        except (RepoRootNotFoundError, UnresolvedVariableError, UnknownServerError, InvalidVariableValueError) as exc:
             typer.echo(str(exc), err=True)
             raise typer.Exit(code=1)
         typer.echo(f"{contract_path}:")
@@ -97,16 +105,21 @@ def export_command(
 
 def compile_command(
     out: Path = typer.Option(DEFAULT_MANIFEST_PATH, "--out", help="Where to write the manifest."),
+    server: str = typer.Option(None, "--server", help=_SERVER_OPTION_HELP),
 ) -> None:
     """Compile every contract and governance file under the current
     directory (the repo root) into one manifest JSON, after checking that
     each file can be read and their references resolve. Exits non-zero,
     writing nothing, if not. `lint` checks each file in full."""
     try:
-        typer.echo(write_manifest(Path("."), out))
+        typer.echo(write_manifest(Path("."), out, server))
     except ProjectCheckError as exc:
         typer.echo(exc.report())
         raise typer.Exit(code=1)
+
+
+def _server_option() -> Any:
+    return typer.Option(None, "--server", help=_SERVER_OPTION_HELP + " Not used with --manifest.")
 
 
 def _manifest_option() -> Any:
@@ -120,11 +133,11 @@ def _manifest_option() -> Any:
     )
 
 
-def _project(manifest_path: Path | None) -> Project:
+def _project(manifest_path: Path | None, server: str | None = None) -> Project:
     """What `list`, `show` and `impact` read: compiled from the repo in the
     current directory, or the prebuilt manifest given with --manifest."""
     try:
-        return Project(".", manifest_path)
+        return Project(".", manifest_path, server)
     except ProjectCheckError as exc:
         message = exc.report()
     except ValueError as exc:
@@ -156,20 +169,20 @@ def _repo_relative(name: str) -> str:
     return name
 
 
-def list_domains_command(manifest_path: Path = _manifest_option()) -> None:
+def list_domains_command(manifest_path: Path = _manifest_option(), server: str = _server_option()) -> None:
     """List domains, with each one's owner and how many data products,
     contracts and glossary terms it has."""
-    typer.echo(views.domains(_project(manifest_path)))
+    typer.echo(views.domains(_project(manifest_path, server)))
 
 
 def list_products_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's data products."),
     owner: str = typer.Option(None, "--owner", help="Only data products this team owns."),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """List data products, with each one's domain, owner and number of
     contracts (its output ports)."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     _check_known(owner, _owners(project.products()), "--owner")
     typer.echo(views.products(project, domain, owner))
@@ -180,11 +193,11 @@ def list_contracts_command(
     layer: str = typer.Option(None, "--layer", help="Only this layer's contracts."),
     product: str = typer.Option(None, "--product", help="Only this data product's contracts."),
     owner: str = typer.Option(None, "--owner", help="Only contracts this team owns."),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """List contracts, upstream first, with each one's owner, data products
     and freshness SLA."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     _check_known(layer, list(dict.fromkeys(c["layer"] for c in project.contracts() if c["layer"])), "--layer")
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     _check_known(product, [p["name"] for p in project.products()], "--product")
@@ -194,10 +207,10 @@ def list_contracts_command(
 
 def list_terms_command(
     domain: str = typer.Option(None, "--domain", help="Only this domain's glossary."),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """List glossary terms, with each one's domain and definition."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
     typer.echo(views.terms(project, domain))
 
@@ -208,12 +221,12 @@ def list_columns_command(
     classification: list[str] = typer.Option(
         None, "--classification", help="Only columns classified so. Repeatable."
     ),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """List columns, upstream first, with each one's type, glossary term
     and classification: e.g. where personal data is, with --classification
     pii --classification sensitive-pii."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     for value in classification or []:
         _check_known(value, [c["name"] for c in project.classifications()], "--classification")
     _check_known(domain, [d["name"] for d in project.domains()], "--domain")
@@ -223,11 +236,11 @@ def list_columns_command(
 
 def show_command(
     name: str = typer.Argument(..., help="A contract id or file, data product, domain or glossary term."),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """Show everything the repository says about one contract, data
     product, domain or glossary term."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     name = _repo_relative(name)
     shown = views.show(project, name)
     if shown is None:
@@ -238,11 +251,11 @@ def show_command(
 
 def impact_command(
     ref: str = typer.Argument(..., help="A contract (id or file), or one of its columns: <contract id>.<column>."),
-    manifest_path: Path = _manifest_option(),
+    manifest_path: Path = _manifest_option(), server: str = _server_option(),
 ) -> None:
     """List everything downstream of a contract or column, nearest first,
     with who owns it: who to tell before changing it."""
-    project = _project(manifest_path)
+    project = _project(manifest_path, server)
     ref = _repo_relative(ref)
     shown = views.impact(project, ref)
     if shown is None:

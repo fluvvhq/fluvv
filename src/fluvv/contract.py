@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
 from fluvv.models import FluvvExtension
+from fluvv.variables import UnknownServerError, choose_server, environment, resolve_contract, resolve_server_variables
 
 FLUVV_CUSTOM_PROPERTIES = ("sources", "ingestion_config")
 OPTIONAL_FLUVV_CUSTOM_PROPERTIES = ("transform", "businessMetrics")
@@ -187,11 +188,23 @@ def parse_extension(doc: dict[str, Any], contract_path: Path) -> FluvvExtension:
     return FluvvExtension.model_validate(values)
 
 
-def resolve_extension(extension: FluvvExtension, repo_root: Path) -> FluvvExtension:
+def server_location(server: dict[str, Any]) -> str | None:
+    """Where a server keeps its table: its `path`, or its `location` for the
+    types ODCS gives one (`azure`, `s3`, ...)."""
+    return server.get("path") or server.get("location")
+
+
+def resolve_extension(
+    extension: FluvvExtension, repo_root: Path, server: str | None = None, variables: Mapping[str, str] | None = None
+) -> FluvvExtension:
     """Fills each contract-backed source's `location`/`format` from that
-    contract's own `servers[0]`, so where a table lives is stated once --
-    in the contract that owns it. Pre-contract sources (`contract: null`)
-    keep what they declare."""
+    contract's own server, so where a table lives is stated once -- in the
+    contract that owns it. The server is the upstream's one called `server`,
+    or its only one (fluvv.variables.choose_server); without `server`, its
+    first, as every contract uses its first then. Its variables are filled
+    in from `variables`
+    (fluvv.variables.environment() if not given).
+    Pre-contract sources (`contract: null`) keep what they declare."""
     sources = []
     for source in extension.sources:
         if source.contract is None:
@@ -205,12 +218,20 @@ def resolve_extension(extension: FluvvExtension, repo_root: Path) -> FluvvExtens
                 f"source '{source.id}': contract '{source.contract}' does not exist under {repo_root}; "
                 f"if that isn't the repository's root, a {PROJECT_FILE} there settles it"
             )
-        server = load_odcs_document(upstream_path)["servers"][0]
-        sources.append(source.model_copy(update={"location": server["path"], "format": server["format"]}))
+        try:
+            chosen = choose_server(load_odcs_document(upstream_path), server)
+        except UnknownServerError as exc:
+            raise UnknownServerError(f"source '{source.id}': {source.contract}: {exc}") from None
+        if chosen is None:
+            raise UnresolvableSourceError(f"source '{source.id}': contract '{source.contract}' has no servers")
+        if variables is None:
+            variables = environment()
+        filled = resolve_server_variables(chosen, variables, custom_properties=False)
+        sources.append(source.model_copy(update={"location": server_location(filled), "format": filled.get("format")}))
     return extension.model_copy(update={"sources": sources})
 
 
-def load_extension(contract_path: Path, resolve: bool = True) -> FluvvExtension:
+def load_extension(contract_path: Path, resolve: bool = True, server: str | None = None) -> FluvvExtension:
     """Reads a contract's Fluvv properties and validates them.
 
     Parameters
@@ -218,9 +239,12 @@ def load_extension(contract_path: Path, resolve: bool = True) -> FluvvExtension:
     contract_path : Path or str
         The contract.
     resolve : bool, default True
-        Fill in each contract-backed source's `location` and `format` from
-        its upstream contract's `servers`, as a run reads them. Without it,
-        they're as written: `None` unless the contract sets them.
+        Fill in the contract's variables, and each contract-backed source's
+        `location` and `format` from its upstream contract's server, as a
+        run reads them. Without it, they're as written: `None` unless the
+        contract sets them.
+    server : str, optional
+        The server a run uses, by its `server` name. Without it, the first.
 
     Returns
     -------
@@ -233,6 +257,11 @@ def load_extension(contract_path: Path, resolve: bool = True) -> FluvvExtension:
     ValueError
         If the properties are missing or malformed, or a source can't be
         resolved.
+    UnresolvedVariableError
+        If `resolve` is set and a variable has no value and no default.
+    UnknownServerError
+        If `resolve` is set and the contract, or an upstream one, has more
+        than one server and none called `server`.
     RepoRootNotFoundError
         If `resolve` is set and the contract isn't in a repository.
 
@@ -248,5 +277,9 @@ def load_extension(contract_path: Path, resolve: bool = True) -> FluvvExtension:
     """
     contract_path = Path(contract_path)
     doc = load_odcs_document(contract_path)
+    if not resolve:
+        return parse_extension(doc, contract_path)
+    variables = environment()
+    doc = resolve_contract(doc, server, variables)
     extension = parse_extension(doc, contract_path)
-    return resolve_extension(extension, find_repo_root(contract_path)) if resolve else extension
+    return resolve_extension(extension, find_repo_root(contract_path), server, variables)

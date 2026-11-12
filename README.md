@@ -127,13 +127,16 @@ a command option or a manifest key isn't a breaking change.
   nothing else and so works with any fluvv of its major version:
   - `fluvv.contract`: `find_repo_root`, `load_odcs_document`,
     `parse_extension`, `resolve_extension`, `get_custom_property`,
-    `RepoRootNotFoundError`
+    `server_location`, `RepoRootNotFoundError`
   - `fluvv.governance`: `load_contracts`, `schema_object`, `columns`,
     `primary_key`, `owner`, `layer`, `sla_entry`,
     `retention_period`, `freshness_period`, `freshness_hours`
   - `fluvv.manifest`: `compile_manifest`, `write_manifest`,
     `load_manifest`, `check_fresh`, `read_or_compile`, `StaleManifestError`
   - `fluvv.lineage`: `combine_sql`
+  - `fluvv.variables`: `environment`, `resolve_variables`, `choose_server`,
+    `resolve_server_variables`, `resolve_contract`,
+    `UnresolvedVariableError`, `UnknownServerError`, `InvalidVariableValueError`
   - `fluvv.semantic`: `ProjectCheckError`
   - The `fluvv.commands` entry point: a `register(app)` function, given
     the CLI's Typer app, that adds commands to it.

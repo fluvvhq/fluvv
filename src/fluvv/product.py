@@ -14,12 +14,24 @@ from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Iterable
 
+import yaml
 from datacontract.data_contract import DataContract
+from pydantic import ValidationError
 
 from fluvv.contract import load_odcs_document, parse_extension
 from fluvv.lineage import build_lineage_graph
 from fluvv.lint import LintResult, lint
 from fluvv.models import FluvvExtension
+from fluvv.semantic import variables_only
+from fluvv.variables import (
+    choose_server,
+    contains_variables,
+    resolve_contract,
+    resolve_server_variables,
+    resolve_variables,
+    uses_variables,
+    with_defaults,
+)
 
 if TYPE_CHECKING:
     from datacontract.model.run import Run
@@ -40,7 +52,12 @@ class EngineRequiredError(ImportError):
     """
 
 
-def _engine(method: str) -> ModuleType:
+_SERVERS_FLAG = "RUNS_ON_CHOSEN_SERVER"
+"""What Fluvv Engine's `fluvv_engine.contract` sets once its methods run a
+contract on the server it's given, with its variables filled in."""
+
+
+def _engine(method: str, contract: Contract | None = None) -> ModuleType:
     try:
         importlib.import_module("fluvv_engine")
     except ModuleNotFoundError as exc:
@@ -61,6 +78,13 @@ def _engine(method: str) -> ModuleType:
         raise EngineRequiredError(
             f"Contract.{method}() needs a newer Fluvv Engine than the one installed; see https://fluvv.se/engine."
         )
+    # An engine from before servers and variables writes to the first
+    # server as written: for such a contract, a literal `${VAR}` folder.
+    if contract is not None and contract._needs_servers() and not getattr(module, _SERVERS_FLAG, False):
+        raise EngineRequiredError(
+            f"Contract.{method}() on a contract with variables, more than one server or a chosen server needs a newer "
+            "Fluvv Engine than the one installed; see https://fluvv.se/engine."
+        )
     return module
 
 
@@ -75,6 +99,9 @@ class Contract:
     ----------
     contract_path : Path or str
         The contract's YAML file.
+    server : str, optional
+        The server its methods use, by its `server` name, as
+        datacontract-cli's `--server` takes it. Without it, the first.
 
     Attributes
     ----------
@@ -82,8 +109,15 @@ class Contract:
         The contract's `id`.
     path : Path
         `contract_path`, as given.
+    server : str or None
+        `server`, as given.
     doc : dict
-        The contract's parsed YAML.
+        The contract as a run on `server` uses it: its parsed YAML, with
+        its variables filled in and that server first. Filled in when first
+        read, so it raises `UnresolvedVariableError` if a variable has no
+        value and no default, and `UnknownServerError` if it has more than
+        one server and none called `server`; `lint()` and `lineage()`
+        don't need it.
 
     Raises
     ------
@@ -107,15 +141,43 @@ class Contract:
     'sales_cars_silver'
     """
 
-    def __init__(self, contract_path: Path | str):
+    def __init__(self, contract_path: Path | str, server: str | None = None):
         self.path = Path(contract_path)
-        self.doc = load_odcs_document(self.path)
-        self.extension: FluvvExtension = parse_extension(self.doc, self.path)
+        self.server = server
+        self._as_written = load_odcs_document(self.path)
+        self._doc: dict | None = None
+        try:
+            # Checked as lint checks it: a variable needs a value only once
+            # the contract is used.
+            parse_extension(with_defaults(self._as_written), self.path)
+        except ValidationError as exc:
+            if not variables_only(exc):
+                raise
+
+    @property
+    def doc(self) -> dict:
+        """The contract as a run on `server` uses it, filled in when first read."""
+        if self._doc is None:
+            self._doc = resolve_contract(self._as_written, self.server)
+        return self._doc
+
+    @property
+    def extension(self) -> FluvvExtension:
+        """The contract's Fluvv properties, from `doc`."""
+        return parse_extension(self.doc, self.path)
 
     @property
     def id(self) -> str:
         """The contract's `id`, e.g. `silver.sales.cars`."""
-        return self.doc["id"]
+        written = self._as_written["id"]
+        return resolve_variables(written, "contract.id") if contains_variables(written) else written
+
+    def _needs_servers(self) -> bool:
+        """Whether running this contract needs Fluvv Engine to run it on the
+        server it's given and fill in its variables. Without either, every
+        engine writes the first server as written, which is the one a run
+        uses then."""
+        return self.server is not None or uses_variables(self._as_written)
 
     def lint(self) -> LintResult:
         """Lints this contract on its own, like `fluvv lint <file>`.
@@ -173,7 +235,8 @@ class Contract:
         {'upstream': ['bronze.sales.cars'], 'downstream': ['gold.sales.cars', 'gold.sales.dealership_performance']}
         """
         graph = build_lineage_graph(repo_root)
-        return graph.get(self.id, {"upstream": [], "downstream": []})
+        # The graph is read as written, so needs no environment: so is the id.
+        return graph.get(self._as_written["id"], {"upstream": [], "downstream": []})
 
     # Fluvv Engine. Each method's implementation is its counterpart in
     # fluvv_engine.contract; what a caller can rely on is documented here.
@@ -221,7 +284,7 @@ class Contract:
         >>> for path in ["contracts/bronze/sales/cars.yaml", "contracts/silver/sales/cars.yaml"]:
         ...     Contract(path).ingest(spark)  # doctest: +SKIP
         """
-        return _engine("ingest").ingest(self, spark, register)
+        return _engine("ingest", self).ingest(self, spark, register)
 
     def test(self, spark: SparkSession | None = None) -> Run:
         """Checks the contract's table against its schema and quality rules.
@@ -256,8 +319,16 @@ class Contract:
         True
         """
         if spark is None:
-            return DataContract(data_contract_file=str(self.path)).test()
-        return _engine("test").test(self, spark)
+            # The contract as filled in, on the server it was filled in for,
+            # with that server's custom properties too: datacontract-cli's
+            # connection may need them.
+            doc = self.doc
+            chosen = choose_server(self._as_written, self.server)
+            if chosen is not None:
+                doc = {**doc, "servers": [resolve_server_variables(chosen), *doc["servers"][1:]]}
+            server = (doc.get("servers") or [{}])[0].get("server")
+            return DataContract(data_contract_str=yaml.safe_dump(doc, sort_keys=False), server=server).test()
+        return _engine("test", self).test(self, spark)
 
     def read(self, spark: SparkSession) -> DataFrame:
         """The contract's table, read from its `servers` location.
@@ -284,7 +355,7 @@ class Contract:
         >>> from fluvv import Contract
         >>> Contract("contracts/gold/sales/cars.yaml").read(spark).show()  # doctest: +SKIP
         """
-        return _engine("read").read(self, spark)
+        return _engine("read", self).read(self, spark)
 
     def logs(self, spark: SparkSession) -> DataFrame:
         """The contract's `ingestion_logs`: one row per ingest, successful or not.
@@ -389,4 +460,4 @@ class Contract:
         >>> report.ok  # doctest: +SKIP
         True
         """
-        return _engine("push_to_openmetadata").push_to_openmetadata(self, spark, repo_root)
+        return _engine("push_to_openmetadata", self).push_to_openmetadata(self, spark, repo_root)

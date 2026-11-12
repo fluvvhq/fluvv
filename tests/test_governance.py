@@ -86,10 +86,15 @@ def test_contract_issues_flag_bad_retention_and_leftover_related_terms():
     doc = _doc(
         "gold",
         [{"name": "a"}, {"name": "b", "customProperties": [{"property": "relatedTerms", "value": ["X"]}]}],
-        slaProperties=[{"property": "retention", "value": "90", "unit": "d"}],
+        slaProperties=[{"property": "retention", "value": "ninety", "unit": "d"}],
     )
     codes = sorted(i.code for i in governance.contract_issues(doc))
     assert codes == ["invalid-retention", "related-terms-in-contract"]
+
+
+def test_an_sla_amount_may_be_digits_as_text_which_a_variable_fills_in():
+    doc = _doc("gold", [{"name": "a"}], slaProperties=[{"property": "retention", "value": "90", "unit": "d"}])
+    assert governance.retention_period(doc) == "P90D" and not governance.contract_issues(doc)
 
 
 def test_a_classification_must_be_in_the_repositorys_vocabulary():

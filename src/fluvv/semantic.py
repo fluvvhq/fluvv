@@ -13,7 +13,11 @@ On one file alone (`fluvv lint`, needs no repository):
   data product has an owner (fluvv.governance).
 
 On the repository as a whole (`fluvv compile`), once every file loads and
-passes lint's structural checks (YAML, Fluvv customProperties, id):
+passes lint's structural checks (YAML, Fluvv customProperties, id), and
+with each contract's variables filled in for the server the run uses
+(fluvv.variables):
+- every variable has a value, every contract has the server the run asks
+  for, and so does every upstream contract a source reads.
 - sources[].contract paths resolve to a contract file, relationships point
   at existing, unique columns, and sources form no cycle.
 - references to shared entities resolve: domains, glossary terms,
@@ -43,16 +47,36 @@ from fluvv.contract import (
     PROJECT_FILE,
     PROJECT_KIND,
     MissingCustomPropertyError,
+    UnresolvableSourceError,
     contract_files,
     get_custom_property,
     governance_files,
     load_odcs_document,
     parse_extension,
     project_layout,
+    resolve_extension,
+    server_location,
     yaml_problem,
 )
 from fluvv.models import FluvvExtension
-from fluvv.schema import GOVERNANCE_KINDS, custom_property_errors, odcs_errors, validate_governance_document
+from fluvv.schema import (
+    GOVERNANCE_KINDS,
+    custom_property_error_paths,
+    custom_property_errors,
+    odcs_error_paths,
+    odcs_errors,
+    validate_governance_document,
+)
+from fluvv.variables import (
+    VARIABLE,
+    UnknownServerError,
+    UnresolvedVariableError,
+    contains_variables,
+    environment,
+    resolve_contract,
+    uses_variables,
+    with_defaults,
+)
 
 
 @dataclass(frozen=True)
@@ -157,12 +181,17 @@ def check_source_locations(extension: FluvvExtension) -> list[SemanticIssue]:
 
 
 def _referenced_tables(sql: str, label: str) -> tuple[set[str], list[SemanticIssue]]:
+    """The tables `sql` reads, as written. A `${VAR}` reference parses as a
+    parameter once its default is dropped, so a variable alone never makes
+    SQL unparseable, and a table named by one isn't judged: which table it
+    is depends on the run."""
     try:
-        parsed = sqlglot.parse_one(sql, dialect="spark")
+        parsed = sqlglot.parse_one(VARIABLE.sub(lambda match: f"${{{match.group(1)}}}", sql), dialect="spark")
     except sqlglot.errors.ParseError as exc:
         return set(), [SemanticIssue("transform-sql-unparseable", f"{label} could not be parsed as pyspark-sql: {exc}")]
     cte_names = {cte.alias_or_name for cte in parsed.find_all(exp.CTE)}
-    return {table.name for table in parsed.find_all(exp.Table)} - cte_names, []
+    named = {table.name for table in parsed.find_all(exp.Table) if not isinstance(table.this, exp.Parameter)}
+    return named - cte_names, []
 
 
 def check_transforms(extension: FluvvExtension) -> list[SemanticIssue]:
@@ -252,11 +281,39 @@ def _contract_problem(doc: Any, path: Path) -> str | None:
     if errors := custom_property_errors(doc):
         return errors[0]
     try:
-        parse_extension(doc, path)
-    except (MissingCustomPropertyError, ValidationError) as exc:
+        parse_extension(with_defaults(doc), path)
+    except MissingCustomPropertyError as exc:
         return str(exc).splitlines()[0]
+    except ValidationError as exc:
+        if not variables_only(exc):
+            return str(exc).splitlines()[0]
     if issues := [*governance.id_issues(doc), *governance.domain_name_issues(doc)]:
         return issues[0].message
+    return None
+
+
+def variables_only(exc: ValidationError) -> bool:
+    """Whether every value Fluvv's model refused holds a `${VAR}` with no
+    default: those are judged once filled in."""
+    return all(contains_variables(error.get("input")) for error in exc.errors())
+
+
+def filled_in_problem(doc: dict[str, Any], path: Path) -> str | None:
+    """What's wrong with a contract once its variables are filled in, said
+    without the values, which may be secrets: the structure lint checks,
+    and the SLA values."""
+    if not isinstance(doc, dict):
+        return None
+    where = [*odcs_error_paths(doc), *custom_property_error_paths(doc)]
+    if where:
+        return f"with its variables filled in, {where[0]} isn't valid; check the variables it uses"
+    try:
+        parse_extension(doc, path)
+    except (MissingCustomPropertyError, ValidationError) as exc:
+        return f"with its variables filled in, {str(exc).splitlines()[0]}"
+    sla = [issue for issue in governance.contract_issues(doc) if issue.code in ("invalid-retention", "invalid-freshness")]
+    if sla:
+        return f"with its variables filled in, {sla[0].message}"
     return None
 
 
@@ -320,8 +377,8 @@ def _distinct_contract_issues(docs_by_path: dict[Path, dict[str, Any]], repo_roo
     and nothing is lost."""
 
     def target(doc: dict[str, Any]) -> str | None:
-        path = (doc.get("servers") or [{}])[0].get("path")
-        return os.path.normpath(path) if path else None
+        location = server_location((doc.get("servers") or [{}])[0])
+        return os.path.normpath(location) if location else None
 
     def fans_in(paths: list[Path]) -> bool:
         docs = [docs_by_path[path] for path in paths]
@@ -395,11 +452,54 @@ def _duplicate_definition_issues(documents: dict[Path, dict[str, Any]], repo_roo
     ]
 
 
-def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
-    """Everything that makes the repository's files fit together. Stops at
-    files that don't pass lint's structural checks: references into a broken
-    file can't be judged, and checking around it would report every column
-    of a broken glossary as an unknown term."""
+def resolve_contracts(
+    docs_by_path: dict[Path, dict[str, Any]], repo_root: Path, server: str | None, variables: dict[str, str]
+) -> tuple[dict[Path, dict[str, Any]], list[ProjectIssue]]:
+    """Each contract as a run on `server` uses it (fluvv.variables.resolve_contract),
+    and the contracts that can't be: a variable with no value, or no server
+    of that name among several."""
+    resolved, issues = {}, []
+    for path, doc in docs_by_path.items():
+        rel = path.relative_to(repo_root).as_posix()
+        try:
+            resolved[path] = resolve_contract(doc, server, variables)
+        except UnresolvedVariableError as exc:
+            issues.append(ProjectIssue(rel, "unresolved-variable", str(exc)))
+        except UnknownServerError as exc:
+            issues.append(ProjectIssue(rel, "unknown-server", str(exc)))
+        else:
+            # As datacontract-cli does, a value a variable filled in is checked
+            # where the file as written couldn't be.
+            if uses_variables(doc, server) and (problem := filled_in_problem(resolved[path], path)):
+                issues.append(ProjectIssue(rel, "invalid-variable-value", problem))
+    return resolved, issues
+
+
+def _upstream_server_issues(doc: dict[str, Any], path: Path, repo_root: Path, server: str | None, variables: dict[str, str]) -> list[SemanticIssue]:
+    """A source reads its upstream contract's server of the same name, or
+    its only one; one that has neither has nothing to read."""
+    try:
+        resolve_extension(parse_extension(doc, path), repo_root, server, variables)
+    except UnknownServerError as exc:
+        return [SemanticIssue("unknown-server", str(exc))]
+    except UnresolvedVariableError as exc:
+        return [SemanticIssue("unresolved-variable", str(exc))]
+    except (MissingCustomPropertyError, ValidationError, UnresolvableSourceError):
+        pass  # reported by lint, or as source-contract-not-found
+    return []
+
+
+def run_project_checks(
+    repo_root: Path | str, server: str | None = None, variables: dict[str, str] | None = None
+) -> list[ProjectIssue]:
+    """Everything that makes the repository's files fit together, with
+    each contract's variables filled in for `server` (the first of each
+    contract's servers if not given) from `variables`
+    (fluvv.variables.environment() if not given). Stops at files that don't
+    pass lint's structural checks, and then at contracts that can't be
+    filled in: references into a broken file can't be judged, and checking
+    around it would report every column of a broken glossary as an unknown
+    term."""
     repo_root = Path(repo_root).resolve()
     if project_file_issues := _project_file_issues(repo_root):
         return project_file_issues
@@ -410,8 +510,11 @@ def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
         )]
     if unfit := unfit_files(repo_root):
         return unfit
+    variables = environment() if variables is None else variables
+    docs_by_path, unresolved = resolve_contracts(governance.load_contracts(repo_root), repo_root, server, variables)
+    if unresolved:
+        return unresolved
     gov = governance.load_governance(repo_root)
-    docs_by_path = governance.load_contracts(repo_root)
     contract_ids = {doc.get("id") for doc in docs_by_path.values()}
 
     issues: list[ProjectIssue] = []
@@ -421,10 +524,11 @@ def run_project_checks(repo_root: Path | str) -> list[ProjectIssue]:
             found += check_source_contracts_exist(parse_extension(doc, path), repo_root)
         except (MissingCustomPropertyError, ValidationError):
             pass
+        found += _upstream_server_issues(doc, path, repo_root, server, variables)
         found += [
             SemanticIssue(issue.code, issue.message)
             for issue in (
-                *governance.relationship_target_issues(doc, repo_root),
+                *governance.relationship_target_issues(doc, repo_root, docs_by_path),
                 *governance.contract_reference_issues(doc, gov),
             )
         ]

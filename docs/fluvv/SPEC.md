@@ -96,6 +96,82 @@ choices, and they are only that:
 | Where data lives, and the folders of the repository (Section 1.1) | `data/<layer>/...` |
 | What runs the contracts, and when | by hand, upstream first |
 
+### 1.3 One contract for every environment
+
+A contract describes its table once, for every environment it runs in.
+What differs between environments, such as where the table is, comes from
+variables, as ODCS v3.2.0 and datacontract-cli define them, and a run picks
+one of the contract's `servers`:
+
+```yaml
+servers:
+  - server: local                 # the first: used when a run names none
+    type: local
+    path: ./data/bronze/sales/cars
+    format: delta
+  - server: lakehouse
+    type: azure
+    location: abfss://lake@${STORAGE_ACCOUNT}.dfs.core.windows.net/bronze/sales/cars
+    format: delta
+```
+
+```bash
+fluvv compile --server lakehouse  # STORAGE_ACCOUNT from the environment or .env
+```
+
+- **Variables.** Any string value may hold `${VAR}` or `${VAR:-default}`.
+  A value comes from the environment, or from a `.env` file in the current
+  directory or the nearest one above it; a variable the environment sets
+  wins over `.env`. One that's unset or empty, with no default, is an error
+  that names it (`unresolved-variable`, Section 6.3). Secrets come the same
+  way and don't belong in the repository.
+- **What's filled in.** Only the chosen server's variables are needed,
+  since the others aren't used. Fields that document the contract rather
+  than build or test its table (`description`, `businessName`, `examples`
+  and the like) stay as written, as datacontract-cli leaves them, and keys
+  are never filled in. Quality `query`s are datacontract-cli's to fill in,
+  which it does from its 1.2; the version fluvv uses runs them as written.
+  A `mustBe` or `mustNotBe` that's one whole reference reads as a number
+  or boolean if it fills in as one, and an SLA amount may be digits as
+  text, so `value: ${KEEP_DAYS}` can be a retention. Where ODCS requires a
+  URI, such as an `azure` or `s3` server's `location`, write its scheme
+  out, as above.
+- **Servers.** `--server <name>` (`server=` in Python) picks the server by
+  its `server` name, as datacontract-cli's `--server` does. A contract with
+  only one server uses it on any run, whatever it's called: a table with
+  one place is there in every environment, where datacontract-cli would
+  refuse the name. Without `--server`, each contract uses its first. A
+  server's table is at its `path`, or its `location` for the types that
+  have one. With `--server`, a source that reads another contract reads
+  that contract's server of the same name, or its only one
+  (`unknown-server`, Section 6.3); without it, that contract's first too.
+- **When.** Values are filled in where a contract is used: compile,
+  export, `list`, `show` and `impact` (each takes `--server`), and the
+  `Contract` methods. The ones that need Fluvv Engine and depend on where
+  the table is refuse a contract with variables or a chosen server, unless
+  the installed engine runs contracts on the server it's given. The file
+  never changes.
+- **Lint** checks the file as written. Fluvv's own checks leave a variable
+  in a field with a fixed set of values, or in an SLA, to compile, which
+  judges it once filled in (`invalid-variable-value`). The ODCS checks lint
+  runs through datacontract-cli judge ODCS's own fields as written: until
+  fluvv moves to a datacontract-cli that fills them in, a variable in a
+  server's `type` or `port`, a `logicalType`, or a quality `type`, `metric`
+  or `dimension` fails lint, as does a URI without its scheme.
+- **Credentials** belong in datacontract-cli's `DATACONTRACT_*` variables
+  or the platform's own sign-in, not in a `${…}` in a contract's fields:
+  the manifest's `server` and `ingestion`, and the generated files, hold
+  filled-in values. A server's custom properties, where datacontract-cli
+  keeps API headers, are the exception it makes: Fluvv leaves them as
+  written everywhere, and only datacontract-cli's own connection fills them
+  in, so compile and export never need what they hold. The manifest's copy
+  of the contract stays as written too.
+
+Fluvv has no environment files or names of its own. Where an environment's
+values live is the job's choice: with its other settings, or in a `.env`
+it provides. Compile checks the environment it runs in; a variable missing
+in another stops a run there before anything is read.
+
 ## 2. Execution model
 
 ```
@@ -145,7 +221,7 @@ All of these are `customProperties` entries on the contract.
 |---|---|---|---|
 | `id` | string | yes | Local alias. The pipeline registers this source as a temp view under this name; transforms reference it in `FROM`/`JOIN`. |
 | `contract` | string \| `null` | yes | Repo-relative path to the Fluvv contract governing this source (e.g. `contracts/bronze/sales/cars.yaml`), or `null` when the source is pre-contract, e.g. a landing zone. |
-| `location` | string | only when `contract` is `null` | Storage path to read. **Omitted when `contract` is set**: derived from that contract's `servers[0].path`, so where a table lives is stated once, by the contract that owns it. |
+| `location` | string | only when `contract` is `null` | Storage path to read; it may hold variables (Section 1.3). **Omitted when `contract` is set**: derived from that contract's server (Section 1.3), so where a table lives is stated once, by the contract that owns it. |
 | `format` | string | only when `contract` is `null` | Storage format, e.g. `csv`, `delta`, `parquet`. Derived like `location`. |
 | `options` | object | no | Format-specific read options, e.g. `{header: true}` for CSV. |
 | `read` | string | yes | Name of the ingestion framework's reader strategy, e.g. `spark_read_file`. Per source, so one contract can mix read strategies. |
@@ -306,8 +382,8 @@ Fluvv only constrains how it's used, and how it reaches catalogs.
 | `team.name` | top level | The table's owning team. The v3.1.0 team object, the same shape as an ODPS product's `team`. The deprecated v3.0 array (`team: [{username, role: owner}]`) is rejected (`team-array-deprecated`). |
 | `team.members[]` with `role: expert` | top level | Table-level experts. Domain and Data Product experts are set in their own files. |
 | `relationships` | column (or schema object) | Foreign keys, `{type: foreignKey, to: <ref>}`. `<ref>` is `table.column` within this contract, or `<contract path>#/schema/<object>/properties/<property>` in another one. Fluvv resolves `<object>`/`<property>` by `id`, falling back to `name`. The target must exist and be unique or the primary key. Becomes an OpenMetadata `FOREIGN_KEY` table constraint. Referencing another contract's column is a reference, so it stays table-scoped. |
-| `slaProperties` `retention` | top level | `{property: retention, value: <int>, unit: d\|w\|m\|y}` (or day(s)/week(s)/month(s)/year(s)). Becomes the table's ISO `retentionPeriod` (e.g. `P90D`). Governance metadata only; the pipeline doesn't enforce it. |
-| `slaProperties` `freshness` | top level | `{property: freshness, value: <positive int>, unit: h\|d\|w}` (or hour(s)/day(s)/week(s); `m` is rejected as ambiguous), optional `element`. The maximum age of the table's data: the latest `element` value when it names a timestamp column, otherwise the time since the last successful `.ingest()`. **Evaluated by `.test()`** with Fluvv Engine, from its run records, and recorded with the other checks, so it reaches OpenMetadata as a test case. |
+| `slaProperties` `retention` | top level | `{property: retention, value: <int>, unit: d\|w\|m\|y}` (or day(s)/week(s)/month(s)/year(s)); the value may be digits as text, which is what a variable fills in. Becomes the table's ISO `retentionPeriod` (e.g. `P90D`). Governance metadata only; the pipeline doesn't enforce it. |
+| `slaProperties` `freshness` | top level | `{property: freshness, value: <positive int>, unit: h\|d\|w}` (or hour(s)/day(s)/week(s); `m` is rejected as ambiguous; the value may be digits as text), optional `element`. The maximum age of the table's data: the latest `element` value when it names a timestamp column, otherwise the time since the last successful `.ingest()`. **Evaluated by `.test()`** with Fluvv Engine, from its run records, and recorded with the other checks, so it reaches OpenMetadata as a test case. |
 | `dataProduct` | top level | **Not used.** Membership is defined by the Data Product (Section 5.3); lint rejects it on a contract. |
 
 Column-level `customProperties: relatedTerms` is **not allowed**: it relates
@@ -437,7 +513,10 @@ and pass lint's structural checks (the ODCS JSON Schema, the Fluvv
 `customProperties`, the `id`). A file that doesn't is reported as
 `fails-lint` with its first problem, and compile checks no references
 until it's fixed, since references into a broken file can't be judged.
-Run `lint` for the full check of each file. A problem shared by several
+It then fills in each contract's variables for the server it compiles for
+(`--server`, Section 1.3), and checks the references with them filled in.
+A contract that can't be filled in is reported, and references wait until
+it can be. Run `lint` for the full check of each file. A problem shared by several
 files, such as one missing domain file, is reported once with every file
 it's in.
 
@@ -456,8 +535,8 @@ it's in.
 | `missing-combine-transform` | Two or more sources but no contract-level transform. |
 | `unknown-source-reference` | The contract-level transform reads a table that isn't a declared source (CTE names are fine). |
 | `transform-sql-unparseable` | A transform isn't parseable as Spark SQL. |
-| `invalid-retention` | Retention without an integer value and a d/w/m/y unit. |
-| `invalid-freshness` | Freshness without a positive integer value and an h/d/w unit. |
+| `invalid-retention` | Retention without an integer value (or digits as text) and a d/w/m/y unit. |
+| `invalid-freshness` | Freshness without a positive integer value (or digits as text) and an h/d/w unit. |
 | `team-array-deprecated` | `team` is the v3.0 array instead of the v3.1.0 object. |
 | `missing-contract-id` | The contract has no `id`, or it isn't a non-empty string. |
 | `invalid-domain-name` | The contract's `domain` contains `.`, `/` or `\`. |
@@ -481,7 +560,7 @@ Schema validation for the file's `kind`, then:
 | `source-contract-not-found` | contract | `sources[].contract` doesn't resolve to a file. |
 | `source-cycle` | contract | Contracts read each other in a cycle, or one reads itself: a table upstream of itself can't be built from nothing. |
 | `duplicate-contract-id` | contract | Two contracts have the same `id`. |
-| `duplicate-target` | contract | Two contracts write to the same `servers` path, or have the same layer, domain and schema name, which would give them one set of run records and one catalog entry. Contracts that all append to one path are fine: they fan in to one table, and nothing is lost. |
+| `duplicate-target` | contract | Two contracts write to the same place (the path or location of the server compiled for, filled in), or have the same layer, domain and schema name, which would give them one set of run records and one catalog entry. Contracts that all append to one path are fine: they fan in to one table, and nothing is lost. |
 | `relationship-target-not-found` | contract | A relationship's `to` doesn't resolve to a contract file, schema object and column. |
 | `relationship-target-not-unique` | contract | A relationship's target is neither unique nor the target's primary key. |
 | `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. A contract, glossary or product with no `domain` is fine. |
@@ -491,6 +570,9 @@ Schema validation for the file's `kind`, then:
 | `duplicate-definition` | glossary, classifications | Two files define one domain's glossary, the shared glossary, or the classifications. |
 | `invalid-project-folder` | project file | A folder it names doesn't exist, or its two folders overlap. Without this, a mistyped folder would compile as nothing to check. |
 | `fails-lint` | any file | The file doesn't load as YAML or fails lint's structural checks; no references are checked until it's fixed. |
+| `unresolved-variable` | contract | A variable has no value and no default in the environment compile runs in (Section 1.3). |
+| `unknown-server` | contract | The contract, or an upstream one a source reads, has more than one server and none called the server the run uses (Section 1.3). |
+| `invalid-variable-value` | contract | With its variables filled in, the contract fails a check lint left to compile: a value outside a field's fixed set, or an SLA that isn't a valid amount (Section 1.3). The message says where, not what the value is. |
 | `not-a-repository` | the folder | There are no contract or governance files under the current directory. |
 
 Each rule checks one file against what it references, or keeps two files from
@@ -502,8 +584,9 @@ contract's own `schema` (names/count).
 
 ## 7. Manifest
 
-`python -m fluvv compile [--out target/manifest.json]` compiles every
-contract and governance file under the repo root into one JSON document
+`python -m fluvv compile [--out target/manifest.json] [--server <name>]`
+compiles every contract and governance file under the repo root, as a run
+on that server uses them (Section 1.3), into one JSON document
 (`manifestVersion: "2"`), validated by `fluvv/schemas/manifest.schema.json`.
 Like dbt's `manifest.json`, it's the single, Spark-free input integrations
 read instead of re-deriving everything from YAML. The OpenMetadata push
@@ -512,7 +595,7 @@ records.
 
 | Key | Contents |
 |---|---|
-| `contracts[]` | Per table: domain and layer (`null` if it has none), owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), server, Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
+| `contracts[]` | Per table: domain and layer (`null` if it has none), owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), the server it was compiled for (filled in, apart from its custom properties), Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
 | `domains[]` | Owner, experts, description. |
 | `glossaries[]` | Terms with definition, synonyms (explicit + derived) and related terms. `domain` is `null` for the shared glossary. |
 | `classifications[]` | Each value a `classification` may take, the repository's or the default, with its `catalogTag`. |
@@ -541,8 +624,8 @@ python -m fluvv impact <contract>[.<column>]  # everything downstream, nearest f
 ```
 
 They print plain aligned text read from the manifest, so they show what
-an integration reading it sees, and they take the same `--manifest`
-option the OpenMetadata push does. `fluvv.Project` is the same in Python:
+an integration reading it sees, and they take compile's `--server` and
+the same `--manifest` option the OpenMetadata push does. `fluvv.Project` is the same in Python:
 `domains()`, `products()`, `contracts()`, `terms()` and `columns()` take
 the same filters and return manifest entries (a term with its `domain`, a
 column with its `contract`); `classifications()` returns the vocabulary;
@@ -572,8 +655,9 @@ column or table, and its owner column says which team.
 
 ## 8. Generated artifacts
 
-`python -m fluvv export [--out <dir>] <contract.yaml>...` derives two
-artifacts per contract, at a path mirroring the contract's own (e.g.
+`python -m fluvv export [--out <dir>] [--server <name>] <contract.yaml>...`
+derives two artifacts per contract, with its variables filled in for that
+server (Section 1.3), at a path mirroring the contract's own (e.g.
 `contracts/bronze/sales/cars.yaml` → `.../bronze/sales/cars.*`). `<dir>`
 defaults to the repository's `target/` folder, where compile writes the manifest:
 

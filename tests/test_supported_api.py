@@ -24,8 +24,9 @@ FUNCTIONS = {
         "find_repo_root": "(start)",
         "load_odcs_document": "(contract_path)",
         "parse_extension": "(doc, contract_path)",
-        "resolve_extension": "(extension, repo_root)",
+        "resolve_extension": "(extension, repo_root, server=None, variables=None)",
         "get_custom_property": "(doc, property_name)",
+        "server_location": "(server)",
     },
     "fluvv.governance": {
         "load_contracts": "(repo_root='.')",
@@ -40,17 +41,24 @@ FUNCTIONS = {
         "freshness_hours": "(doc)",
     },
     "fluvv.manifest": {
-        "compile_manifest": "(repo_root='.')",
-        "write_manifest": "(repo_root='.', out=None)",
+        "compile_manifest": "(repo_root='.', server=None, variables=None)",
+        "write_manifest": "(repo_root='.', out=None, server=None, variables=None)",
         "load_manifest": "(path)",
         "check_fresh": "(manifest, repo_root='.')",
-        "read_or_compile": "(path=None, repo_root='.')",
+        "read_or_compile": "(path=None, repo_root='.', server=None)",
     },
     "fluvv.lineage": {"combine_sql": "(sources, transform)"},
+    "fluvv.variables": {
+        "environment": "()",
+        "resolve_variables": "(value, source='', variables=None)",
+        "choose_server": "(doc, name=None)",
+        "resolve_server_variables": "(server, variables=None, custom_properties=True)",
+        "resolve_contract": "(doc, server=None, variables=None)",
+    },
 }
 
 PROJECT_METHODS = {
-    "__init__": "(self, repo_root='.', manifest=None)",
+    "__init__": "(self, repo_root='.', manifest=None, server=None)",
     "domains": "(self)",
     "products": "(self, domain=None, owner=None)",
     "contracts": "(self, domain=None, layer=None, product=None, owner=None)",
@@ -69,6 +77,9 @@ EXCEPTIONS = {
     "fluvv.manifest.StaleManifestError": ValueError,
     "fluvv.semantic.ProjectCheckError": ValueError,
     "fluvv.product.EngineRequiredError": ImportError,
+    "fluvv.variables.UnresolvedVariableError": ValueError,
+    "fluvv.variables.UnknownServerError": ValueError,
+    "fluvv.variables.InvalidVariableValueError": ValueError,
 }
 
 EXPORTS = {

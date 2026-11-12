@@ -35,6 +35,10 @@ class Project:
         A manifest to read instead of compiling the repository: a file,
         refused if the repository has changed since it was compiled, or one
         already loaded.
+    server : str, optional
+        The server to compile for, by its `server` name, with variables
+        filled in. Without it, each contract's first. Not used with
+        `manifest`.
 
     Attributes
     ----------
@@ -60,8 +64,8 @@ class Project:
     ['gold.sales.cars', 'gold.sales.dealership_performance', 'gold.sales.employees', 'gold.sales.locations']
     """
 
-    def __init__(self, repo_root: Path | str = ".", manifest: Path | str | dict[str, Any] | None = None):
-        self.manifest = manifest if isinstance(manifest, dict) else read_or_compile(manifest, repo_root)
+    def __init__(self, repo_root: Path | str = ".", manifest: Path | str | dict[str, Any] | None = None, server: str | None = None):
+        self.manifest = manifest if isinstance(manifest, dict) else read_or_compile(manifest, repo_root, server)
 
     def _ranks(self) -> dict[str, int]:
         """What orders contracts, upstream first: each one's distance from

@@ -120,7 +120,9 @@ def column_lineage(doc: dict[str, Any], upstream_by_source_id: dict[str, dict[st
     return by_source
 
 
-def build_lineage_graph(repo_root: Path | str = ".") -> dict[str, dict[str, list[str]]]:
+def build_lineage_graph(
+    repo_root: Path | str = ".", docs_by_path: dict[Path, dict[str, Any]] | None = None
+) -> dict[str, dict[str, list[str]]]:
     """Walks every contract under `repo_root` and inverts each contract's
     `sources[].contract` edges into
     `{contract_id: {"upstream": [...], "downstream": [...]}}`. A full scan
@@ -128,14 +130,17 @@ def build_lineage_graph(repo_root: Path | str = ".") -> dict[str, dict[str, list
     forward to what depends on it -- so it's done once here for every
     contract rather than per-call. A dangling `source.contract` path (a
     stale/renamed reference) is skipped rather than raising -- compile's
-    `source-contract-not-found` check is where that gets reported."""
+    `source-contract-not-found` check is where that gets reported. Compile
+    passes `docs_by_path` (keyed by resolved path) with each contract's
+    variables filled in; without it, the files are read as written."""
     repo_root = Path(repo_root)
+    if docs_by_path is None:
+        docs_by_path = {path.resolve(): load_odcs_document(path) for path in contract_files(repo_root)}
     docs_by_id: dict[str, dict[str, Any]] = {}
     id_by_resolved_path: dict[Path, str] = {}
-    for path in contract_files(repo_root):
-        doc = load_odcs_document(path)
+    for path, doc in docs_by_path.items():
         docs_by_id[doc["id"]] = doc
-        id_by_resolved_path[path.resolve()] = doc["id"]
+        id_by_resolved_path[path] = doc["id"]
 
     graph: dict[str, dict[str, list[str]]] = {contract_id: {"upstream": [], "downstream": []} for contract_id in docs_by_id}
 

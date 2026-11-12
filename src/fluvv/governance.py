@@ -28,6 +28,7 @@ from fluvv.contract import (
     load_odcs_document,
     project_layout,
 )
+from fluvv.variables import contains_variables
 
 DEFAULT_CLASSIFICATIONS = {
     "public": "PII.None",
@@ -103,6 +104,18 @@ def sla_entry(doc: dict[str, Any], property_name: str) -> dict[str, Any] | None:
     return next((p for p in doc.get("slaProperties") or [] if p.get("property") == property_name), None)
 
 
+def _sla_amount(value: Any) -> int | None:
+    """An SLA's whole-number amount: an integer, or digits as text, which is
+    what a `${VAR}` fills in."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def retention_period(doc: dict[str, Any]) -> str | None:
     """ODCS `slaProperties` `retention` entry as an ISO 8601 duration
     (e.g. `{value: 90, unit: d}` -> "P90D"), or None if absent/unmappable."""
@@ -110,9 +123,10 @@ def retention_period(doc: dict[str, Any]) -> str | None:
     if entry is None:
         return None
     unit = _ISO_UNIT_BY_SLA_UNIT.get(str(entry.get("unit", "")).lower())
-    if unit is None or not isinstance(entry.get("value"), int):
+    amount = _sla_amount(entry.get("value"))
+    if unit is None or amount is None:
         return None
-    return f"P{entry['value']}{unit}"
+    return f"P{amount}{unit}"
 
 
 def freshness_hours(doc: dict[str, Any]) -> int | None:
@@ -122,10 +136,10 @@ def freshness_hours(doc: dict[str, Any]) -> int | None:
     if entry is None:
         return None
     unit = _FRESHNESS_UNITS.get(str(entry.get("unit", "")).lower())
-    value = entry.get("value")
-    if unit is None or not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+    amount = _sla_amount(entry.get("value"))
+    if unit is None or amount is None or amount <= 0:
         return None
-    return value * _HOURS_BY_FRESHNESS_UNIT[unit]
+    return amount * _HOURS_BY_FRESHNESS_UNIT[unit]
 
 
 def freshness_period(doc: dict[str, Any]) -> str | None:
@@ -134,7 +148,8 @@ def freshness_period(doc: dict[str, Any]) -> str | None:
     if entry is None or freshness_hours(doc) is None:
         return None
     unit = _FRESHNESS_UNITS[str(entry["unit"]).lower()]
-    return f"PT{entry['value']}H" if unit == "H" else f"P{entry['value']}{unit}"
+    amount = _sla_amount(entry["value"])
+    return f"PT{amount}H" if unit == "H" else f"P{amount}{unit}"
 
 
 def primary_key(doc: dict[str, Any]) -> list[str]:
@@ -198,16 +213,20 @@ def _by_id_or_name(items: list[dict[str, Any]], key: str) -> dict[str, Any] | No
     return next((i for i in items if i.get("id") == key), None) or next((i for i in items if i.get("name") == key), None)
 
 
-def resolve_reference(ref: str, doc: dict[str, Any], repo_root: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def resolve_reference(
+    ref: str, doc: dict[str, Any], repo_root: Path, docs_by_path: dict[Path, dict[str, Any]] | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """(target contract, target column) for a relationship's `to`, or
-    raises InvalidReferenceError saying what didn't resolve."""
+    raises InvalidReferenceError saying what didn't resolve. A target in
+    `docs_by_path` (keyed by resolved path) is read from there, so compile
+    judges it with its variables filled in, as it does `doc`."""
     parsed = parse_reference(ref)
     target_doc = doc
     if parsed.contract is not None:
         path = Path(repo_root) / parsed.contract
         if not path.is_file():
             raise InvalidReferenceError(f"'{ref}': contract file '{parsed.contract}' does not exist")
-        target_doc = load_odcs_document(path)
+        target_doc = (docs_by_path or {}).get(path.resolve()) or load_odcs_document(path)
     obj = _by_id_or_name(target_doc.get("schema") or [], parsed.schema_object)
     if obj is None:
         raise InvalidReferenceError(f"'{ref}': '{target_doc.get('id')}' has no schema object '{parsed.schema_object}'")
@@ -421,6 +440,8 @@ def contract_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
                 "move them to the term in its glossary",
             ))
     for entry in doc.get("slaProperties") or []:
+        if contains_variables(entry.get("value")) or contains_variables(entry.get("unit")):
+            continue  # judged once filled in
         if entry.get("property") == "retention" and retention_period(doc) is None:
             issues.append(GovernanceIssue(
                 "invalid-retention",
@@ -478,7 +499,9 @@ def relationship_shape_issues(doc: dict[str, Any]) -> list[GovernanceIssue]:
     return issues
 
 
-def relationship_target_issues(doc: dict[str, Any], repo_root: Path) -> list[GovernanceIssue]:
+def relationship_target_issues(
+    doc: dict[str, Any], repo_root: Path, docs_by_path: dict[Path, dict[str, Any]] | None = None
+) -> list[GovernanceIssue]:
     """The part of `relationship_issues` that resolves targets, which may
     live in other contracts. Skips relationships whose shape is wrong."""
     issues = []
@@ -488,7 +511,7 @@ def relationship_target_issues(doc: dict[str, Any], repo_root: Path) -> list[Gov
         targets = []
         for ref in to_refs:
             try:
-                targets.append(resolve_reference(ref, doc, repo_root))
+                targets.append(resolve_reference(ref, doc, repo_root, docs_by_path))
             except InvalidReferenceError as exc:
                 issues.append(GovernanceIssue("relationship-target-not-found", str(exc)))
         if len(targets) != len(to_refs):

@@ -12,9 +12,26 @@ version in [the spec](docs/fluvv/SPEC.md).
   with parameters, what it returns and raises, and examples, so `help()`
   is a reference. The examples run as tests, and the
   [Python API](https://fluvv.se/docs/python-api) pages are made from them.
+- One contract for every environment, as datacontract-cli does it: any
+  string value may hold `${VAR}` or `${VAR:-default}`, filled in from the
+  environment or a `.env` file, and `--server` (`server=`) picks the
+  server a run uses, the first without it. `compile`, `export`, `list`,
+  `show`, `impact`, `Project`, `Contract` and `load_extension` take it; the
+  manifest's `server` and `ingestion` and the generated files hold the
+  filled-in values. Compile reports a variable with no value
+  (`unresolved-variable`), a server a contract or its upstream doesn't
+  have (`unknown-server`), and a filled-in value that isn't valid
+  (`invalid-variable-value`). Lint checks files as written, and an SLA
+  amount may be digits as text, which a variable fills in. Without
+  `--server`, every contract works as before; one with variables, or run
+  on a chosen server, is refused by a Fluvv Engine that doesn't run
+  contracts on a chosen server yet. `fluvv.variables` is supported API.
 
 ### Changed
 
+- A `${NAME}` already in a contract's strings, such as Spark SQL's own
+  `${var}` substitution in a transform, is now filled in from the
+  environment, and fails without a value or a default.
 - **Breaking:** `fluvv export` and `export_artifacts` write to the
   repository's `target/` folder by default, where `fluvv compile` writes the
   manifest, instead of the contracts folder. Like the manifest, the files
