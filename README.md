@@ -64,7 +64,7 @@ customProperties:
 ```bash
 fluvv lint                                     # every contract and governance file; or name files/folders
 fluvv compile                                  # references between files, then -> target/manifest.json
-fluvv export contracts/silver/sales/cars.yaml  # Spark schema + resolved ingestion config
+fluvv export contracts/silver/sales/cars.yaml  # Spark schema + resolved ingestion config -> target/
 fluvv list contracts --layer gold              # also: list domains | products | terms | columns
 fluvv show gold.sales.cars                     # one contract, data product, domain or term, in full
 fluvv impact silver.sales.cars.price           # what's downstream of a table or column, and who owns it

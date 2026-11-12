@@ -13,6 +13,18 @@ version in [the spec](docs/fluvv/SPEC.md).
   is a reference. The examples run as tests, and the
   [Python API](https://fluvv.se/docs/python-api) pages are made from them.
 
+### Changed
+
+- **Breaking:** `fluvv export` and `export_artifacts` write to the
+  repository's `target/` folder by default, where `fluvv compile` writes the
+  manifest, instead of the contracts folder. Like the manifest, the files
+  are derived from the contracts, so they're regenerated rather than
+  committed. A CI step that compares committed copies with `git diff` now
+  checks nothing: delete the committed copies and the step, and ignore
+  `target/` if it isn't ignored yet. Anything that still reads the files
+  from the contracts folder keeps working with `--out <contracts folder>`
+  (`out_dir`).
+
 ## [2.0.0] - 2026-11-08
 
 Fluvv no longer prescribes how a repository names, lays out and layers its

@@ -23,11 +23,11 @@ from pathlib import Path
 from typing import Any
 
 from fluvv import governance, lineage
-from fluvv.contract import PROJECT_FILE, contract_files, get_custom_property, governance_files, parse_extension, resolve_extension
+from fluvv.contract import PROJECT_FILE, TARGET_DIR, contract_files, get_custom_property, governance_files, parse_extension, resolve_extension
 from fluvv.semantic import ProjectCheckError, run_project_checks
 
 MANIFEST_VERSION = "2"
-DEFAULT_PATH = Path("target") / "manifest.json"
+DEFAULT_PATH = TARGET_DIR / "manifest.json"
 
 
 class StaleManifestError(ValueError):

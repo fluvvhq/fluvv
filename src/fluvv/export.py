@@ -6,9 +6,11 @@
   are filled in from its upstream contract, so the engine never needs to
   read another contract.
 
-`<out>` defaults to the repository's contracts folder, and each output path
-mirrors the contract's own path relative to that folder, e.g.
-contracts/bronze/sales/cars.yaml -> contracts/spark_schemas/bronze/sales/cars.py.
+`<out>` defaults to the repository's `target/` folder, where compile writes
+the manifest: like it, they're derived from the contracts, so they're regenerated rather
+than committed. Each output path mirrors the contract's own path relative to
+the contracts folder, e.g.
+contracts/bronze/sales/cars.yaml -> target/spark_schemas/bronze/sales/cars.py.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from pathlib import Path
 
 from datacontract.data_contract import DataContract
 
-from fluvv.contract import find_repo_root, load_odcs_document, parse_extension, project_layout, resolve_extension
+from fluvv.contract import TARGET_DIR, find_repo_root, load_odcs_document, parse_extension, project_layout, resolve_extension
 
 
 @dataclass
@@ -51,9 +53,11 @@ def export_artifacts(
     """Writes a contract's generated files, like `fluvv export <file>`.
 
     A Spark schema under `spark_schemas/` and a resolved ingestion config
-    under `ingestion_config/`, each at the contract's own path relative to
-    the contracts folder, e.g. `contracts/silver/sales/cars.yaml` gives
-    `spark_schemas/silver/sales/cars.py`. Existing files are overwritten.
+    under `ingestion_config/`, in the repository's `target/` folder unless
+    `out_dir` names another, each at the contract's own path relative to the
+    contracts folder, e.g. `contracts/silver/sales/cars.yaml` gives
+    `target/spark_schemas/silver/sales/cars.py`. Existing files are
+    overwritten.
 
     Parameters
     ----------
@@ -63,7 +67,7 @@ def export_artifacts(
         The repository the contract is in. Found from `contract_path` if
         not given.
     out_dir : Path or str, optional
-        Where the two folders go. The repository's contracts folder if not
+        Where the two folders go. The repository's `target/` folder if not
         given.
 
     Returns
@@ -82,15 +86,15 @@ def export_artifacts(
     >>> from fluvv import export_artifacts
     >>> result = export_artifacts("contracts/silver/sales/cars.yaml")
     >>> result.spark_schema_path
-    PosixPath('.../contracts/spark_schemas/silver/sales/cars.py')
+    PosixPath('.../target/spark_schemas/silver/sales/cars.py')
     >>> result.ingestion_config_path
-    PosixPath('.../contracts/ingestion_config/silver/sales/cars.json')
+    PosixPath('.../target/ingestion_config/silver/sales/cars.json')
     """
     contract_path = Path(contract_path)
     repo_root = Path(repo_root) if repo_root is not None else find_repo_root(contract_path)
     contracts_dir = repo_root / project_layout(repo_root).contracts
     rel_stem = _relative_stem(contract_path, contracts_dir)
-    out = Path(out_dir) if out_dir is not None else contracts_dir
+    out = Path(out_dir) if out_dir is not None else repo_root / TARGET_DIR
 
     data_contract = DataContract(data_contract_file=str(contract_path))
 

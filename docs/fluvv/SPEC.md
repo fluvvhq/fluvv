@@ -575,15 +575,15 @@ column or table, and its owner column says which team.
 `python -m fluvv export [--out <dir>] <contract.yaml>...` derives two
 artifacts per contract, at a path mirroring the contract's own (e.g.
 `contracts/bronze/sales/cars.yaml` → `.../bronze/sales/cars.*`). `<dir>`
-defaults to the repository's contracts folder:
+defaults to the repository's `target/` folder, where compile writes the manifest:
 
 | Artifact | Path | Source |
 |---|---|---|
 | Spark schema | `<dir>/spark_schemas/<mirrored path>.py` | `datacontract-cli`'s `export("spark")`, unchanged. |
 | Ingestion config | `<dir>/ingestion_config/<mirrored path>.json` | The parsed `sources`/`transform`/`ingestion_config`/`businessMetrics`, **resolved**: contract-backed sources get their `location`/`format` filled in, so the engine never needs to read another contract. |
 
-These are derived files: regenerate them after editing a contract rather
-than hand-editing them.
+Like the manifest (Section 7), these are derived files: regenerate them
+rather than hand-editing them, and don't commit them.
 
 ## 9. Roadmap
 

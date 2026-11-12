@@ -557,12 +557,15 @@ def test_export_with_a_broken_project_file_says_so_in_one_line(tmp_path):
     assert "fluvv.yaml: invalid YAML" in result.output
 
 
-def test_export_defaults_to_the_contracts_folder_and_takes_another(tmp_path, monkeypatch):
+def test_export_defaults_to_target_and_takes_another(tmp_path, monkeypatch):
     repo = _moved_repo(tmp_path / "repo")
     contract = repo / "data_contracts/tables/silver/sales/cars.yaml"
     default = export_artifacts(contract)
-    assert default.spark_schema_path == repo / "data_contracts/tables/spark_schemas/silver/sales/cars.py"
+    # Mirrors the contract's path inside the contracts folder, wherever that is.
+    assert default.spark_schema_path == repo / "target/spark_schemas/silver/sales/cars.py"
+    assert default.ingestion_config_path == repo / "target/ingestion_config/silver/sales/cars.json"
     assert default.ingestion_config_path.is_file()
+    assert not (repo / "data_contracts/tables/spark_schemas").exists()
 
     monkeypatch.chdir(repo)
     result = CliRunner().invoke(cli.build_app(), ["export", str(contract), "--out", "generated"])

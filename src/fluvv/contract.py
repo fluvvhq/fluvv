@@ -27,6 +27,9 @@ entries."""
 RENAMED_LAYER_PROBLEM = f"the `{RENAMED_LAYER_PROPERTY}` customProperty is now `{LAYER_PROPERTY}`; rename it"
 
 PROJECT_FILE = "fluvv.yaml"
+TARGET_DIR = Path("target")
+"""Where generated files go, from the repository's root: the manifest and
+the exported files, all derived from the contracts and none committed."""
 PROJECT_KIND = "Project"
 _TOP_FOLDERS = ("contracts", "governance")
 

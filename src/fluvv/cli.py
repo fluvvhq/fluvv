@@ -31,8 +31,8 @@ def _yaml_files(path: Path) -> list[Path]:
     holds its contracts or governance folder) is the YAML in those two
     folders plus its project file, so `fluvv lint .` lints the project and
     nothing else in it. Any other folder is every YAML file below it,
-    skipping hidden folders like .venv. The generated files under contracts/
-    are .py and .json, so they're never picked up."""
+    skipping hidden folders like .venv. Generated files are .py and .json,
+    so they're never picked up, wherever `export --out` puts them."""
     if path.is_file():
         return [path]
     try:
@@ -77,12 +77,13 @@ def lint_command(
 def export_command(
     contract_paths: list[Path] = typer.Argument(..., help="One or more Fluvv contract YAML files."),
     out: Path = typer.Option(
-        None, "--out", help="Where to write the spark_schemas/ and ingestion_config/ folders. Default: the repository's contracts folder."
+        None, "--out", help="Where to write the spark_schemas/ and ingestion_config/ folders. Default: the repository's target/ folder."
     ),
 ) -> None:
     """Export the Spark schema and ingestion_config JSON for one or more
-    contracts, at paths mirroring each contract's own under the repository's
-    contracts folder, so each contract must be inside one."""
+    contracts to the repository's target/ folder, at paths mirroring each
+    contract's own under its contracts folder, so each contract must be
+    inside one."""
     for contract_path in contract_paths:
         try:
             result = export_artifacts(contract_path, out_dir=out)
