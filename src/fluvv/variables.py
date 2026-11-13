@@ -41,6 +41,12 @@ keeps the type its text reads as."""
 
 _PLAIN_NUMBER = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 
+_FLUVV_PROPERTIES = frozenset({"sources", "transform", "ingestion_config", "businessMetrics", "layer"})
+"""Fluvv's own custom properties, whose structure Fluvv knows: documentation
+in them, such as a business metric's `description`, stays as written as it
+does in ODCS's own fields. Any other custom property's value is opaque, and
+all of it is filled in, as datacontract-cli does."""
+
 
 class UnresolvedVariableError(ValueError):
     """A `${VAR}` reference names a variable that's unset or empty and has no default.
@@ -306,14 +312,15 @@ def _custom_property(prop: Any, source: str, values: Mapping[str, str]) -> Any:
         return prop
     filled = _resolve({key: value for key, value in prop.items() if key != "value"}, source, values)
     if "value" in prop:
-        filled["value"] = _resolve(prop["value"], f"{source}.value", values, model=False)
+        filled["value"] = _resolve(prop["value"], f"{source}.value", values, model=prop.get("property") in _FLUVV_PROPERTIES)
     return {key: filled[key] for key in prop}
 
 
 def _resolve(node: Any, source: str, values: Mapping[str, str], model: bool = True, typed: bool = False) -> Any:
-    """`node` filled in. `model` is the ODCS structure, where documentation
-    fields stay as written; a custom property's value is any data, all of it
-    filled in, as datacontract-cli does."""
+    """`node` filled in. `model` is ODCS's structure, or one of Fluvv's own
+    properties, where documentation fields stay as written; any other
+    custom property's value is opaque data, all of it filled in, as
+    datacontract-cli does."""
     if isinstance(node, dict):
         filled = {}
         for key, value in node.items():
@@ -321,6 +328,10 @@ def _resolve(node: Any, source: str, values: Mapping[str, str], model: bool = Tr
             if model and key == "implementation" and node.get("engine") == "datacontract-cli" and isinstance(value, dict) and "arguments" in value:
                 # A custom check's arguments are inputs to the test, like a library metric's.
                 filled[key] = {**copy.deepcopy(value), "arguments": _resolve(value["arguments"], f"{where}.arguments", values, model=False)}
+            elif model and key == "options":
+                # A source's read options are the reader's own (Spark JDBC
+                # takes a `query`), so all of them are filled in.
+                filled[key] = _resolve(value, where, values, model=False)
             elif model and key in _DEFERRED_FIELDS:
                 filled[key] = copy.deepcopy(value)
             elif model and key == "customProperties" and isinstance(value, list):

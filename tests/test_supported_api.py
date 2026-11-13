@@ -119,10 +119,11 @@ def test_top_level_exports_are_kept():
     assert EXPORTS <= set(fluvv.__all__)
 
 
-def test_contract_keeps_path_doc_and_id():
+def test_contract_keeps_path_doc_id_and_server():
     contract = fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml")
     assert contract.path == EXAMPLE / "contracts/silver/sales/cars.yaml"
     assert contract.doc["id"] == contract.id == "silver.sales.cars"
+    assert contract.server is None and fluvv.Contract(contract.path, server="local").server == "local"
 
 
 def test_manifest_version_and_plugin_group_stay_put():

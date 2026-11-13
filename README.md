@@ -121,8 +121,8 @@ a command option or a manifest key isn't a breaking change.
   [the spec](https://github.com/fluvvhq/fluvv/blob/main/docs/fluvv/SPEC.md).
 - The manifest: `manifestVersion` stays `"2"` and keys are only added.
 - Everything `fluvv` exports (`fluvv.__all__`), including `Project`'s
-  methods and the manifest entries they return, `Contract`'s `path`, `doc`
-  and `id`, and `fluvv.product.EngineRequiredError`.
+  methods and the manifest entries they return, `Contract`'s `path`, `doc`,
+  `id` and `server`, and `fluvv.product.EngineRequiredError`.
 - For packages building on fluvv, such as Fluvv Engine, which relies on
   nothing else and so works with any fluvv of its major version:
   - `fluvv.contract`: `find_repo_root`, `load_odcs_document`,

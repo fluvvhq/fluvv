@@ -184,7 +184,7 @@ sources[]  →  each read into a DataFrame  →  registered as a temp view named
                        contract-level transform.sql combines the views (join / union / aggregate)
                                                    |
                                                    v
-                        result written to this contract's `servers` location
+             result written to the location of the server the run uses (Section 1.3)
 ```
 
 SQL is the **only** transform mechanism, used uniformly whether a layer is
@@ -383,7 +383,7 @@ Fluvv only constrains how it's used, and how it reaches catalogs.
 | `team.members[]` with `role: expert` | top level | Table-level experts. Domain and Data Product experts are set in their own files. |
 | `relationships` | column (or schema object) | Foreign keys, `{type: foreignKey, to: <ref>}`. `<ref>` is `table.column` within this contract, or `<contract path>#/schema/<object>/properties/<property>` in another one. Fluvv resolves `<object>`/`<property>` by `id`, falling back to `name`. The target must exist and be unique or the primary key. Becomes an OpenMetadata `FOREIGN_KEY` table constraint. Referencing another contract's column is a reference, so it stays table-scoped. |
 | `slaProperties` `retention` | top level | `{property: retention, value: <int>, unit: d\|w\|m\|y}` (or day(s)/week(s)/month(s)/year(s)); the value may be digits as text, which is what a variable fills in. Becomes the table's ISO `retentionPeriod` (e.g. `P90D`). Governance metadata only; the pipeline doesn't enforce it. |
-| `slaProperties` `freshness` | top level | `{property: freshness, value: <positive int>, unit: h\|d\|w}` (or hour(s)/day(s)/week(s); `m` is rejected as ambiguous; the value may be digits as text), optional `element`. The maximum age of the table's data: the latest `element` value when it names a timestamp column, otherwise the time since the last successful `.ingest()`. **Evaluated by `.test()`** with Fluvv Engine, from its run records, and recorded with the other checks, so it reaches OpenMetadata as a test case. |
+| `slaProperties` `freshness` | top level | `{property: freshness, value: <positive int>, unit: h\|d\|w}` (or hour(s)/day(s)/week(s); `m` is rejected as ambiguous; the value may be digits as text), optional `element`. The maximum age of the table's data: the latest `element` value when it names a timestamp column, otherwise the time since the last successful `.ingest()` on the server it's tested on. **Evaluated by `.test()`** with Fluvv Engine, from its run records, and recorded with the other checks, so it reaches OpenMetadata as a test case. |
 | `dataProduct` | top level | **Not used.** Membership is defined by the Data Product (Section 5.3); lint rejects it on a contract. |
 
 Column-level `customProperties: relatedTerms` is **not allowed**: it relates

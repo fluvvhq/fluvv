@@ -378,3 +378,22 @@ def test_lineage_needs_no_environment_and_finds_a_contract_whose_id_is_a_variabl
     doc["id"] = "${LAYER:-bronze}.cars"
     (repo / "contracts/bronze/cars.yaml").write_text(yaml.safe_dump(doc, sort_keys=False))
     assert Contract("contracts/bronze/cars.yaml").lineage(repo)["downstream"] == ["silver.cars"]
+
+
+def test_documentation_in_fluvvs_own_properties_stays_as_written():
+    doc = _bronze()
+    doc["customProperties"].append({"property": "businessMetrics", "value": [
+        {"name": "cars", "description": "Counted with ${TOKEN}", "sql": "SELECT COUNT(*) FROM ${TABLE:-bronze_cars}", "metricType": "COUNT"},
+    ]})
+    doc["customProperties"].append({"property": "someone_elses", "value": {"description": "${TOKEN}"}})
+    resolved = resolve_contract(doc, None, {"TOKEN": "s3cr3t"})
+    metric = resolved["customProperties"][2]["value"][0]
+    assert metric["description"] == "Counted with ${TOKEN}" and metric["sql"] == "SELECT COUNT(*) FROM bronze_cars"
+    assert resolved["customProperties"][3]["value"] == {"description": "s3cr3t"}  # opaque to Fluvv: all filled in, as datacontract-cli does
+
+
+def test_a_sources_read_options_are_all_filled_in():
+    doc = _bronze()
+    doc["customProperties"][0]["value"][0]["options"] = {"query": "SELECT * FROM ${TABLE}", "dbtable": "${TABLE}"}
+    options = resolve_contract(doc, None, {"TABLE": "cars"})["customProperties"][0]["value"][0]["options"]
+    assert options == {"query": "SELECT * FROM cars", "dbtable": "cars"}

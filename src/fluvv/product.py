@@ -82,7 +82,7 @@ def _engine(method: str, contract: Contract | None = None) -> ModuleType:
     # server as written: for such a contract, a literal `${VAR}` folder.
     if contract is not None and contract._needs_servers() and not getattr(module, _SERVERS_FLAG, False):
         raise EngineRequiredError(
-            f"Contract.{method}() on a contract with variables, more than one server or a chosen server needs a newer "
+            f"Contract.{method}() on a contract with variables or a chosen server needs a newer "
             "Fluvv Engine than the one installed; see https://fluvv.se/engine."
         )
     return module
@@ -246,9 +246,11 @@ class Contract:
 
         Needs Fluvv Engine. Reads each source, runs the transforms and
         writes the result the way `ingestion_config` says, then runs each
-        catalog registration strategy in `register`. Every run, successful
-        or not, adds a row to the contract's `ingestion_logs`, and a
-        successful one adds its business metrics to `business_metrics`.
+        catalog registration strategy in `register`. Every run that starts,
+        successful or not, adds a row to the contract's `ingestion_logs`,
+        and a successful one adds its business metrics to
+        `business_metrics`. One refused before it starts (a variable with no
+        value, nowhere to read or write, no license) adds none.
 
         Upstream contracts aren't run first: a source is read as its table
         is now. The steps are in
@@ -331,7 +333,7 @@ class Contract:
         return _engine("test", self).test(self, spark)
 
     def read(self, spark: SparkSession) -> DataFrame:
-        """The contract's table, read from its `servers` location.
+        """The contract's table, read from the location of the server it's loaded for.
 
         Needs Fluvv Engine.
 
@@ -358,7 +360,7 @@ class Contract:
         return _engine("read", self).read(self, spark)
 
     def logs(self, spark: SparkSession) -> DataFrame:
-        """The contract's `ingestion_logs`: one row per ingest, successful or not.
+        """The contract's `ingestion_logs`: one row per ingest that started, successful or not.
 
         Needs Fluvv Engine. The columns are in
         [Run record tables](https://fluvv.se/docs/run-record-tables).
@@ -413,7 +415,7 @@ class Contract:
 
         See Also
         --------
-        Contract.logs : Every run, successful or not.
+        Contract.logs : Every run that started, successful or not.
 
         Examples
         --------
