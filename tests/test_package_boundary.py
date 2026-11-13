@@ -163,3 +163,54 @@ def test_version_flag_prints_the_installed_version():
     result = CliRunner().invoke(cli.build_app(), ["--version"])
     assert result.exit_code == 0
     assert result.output.strip() == f"fluvv {version('fluvv')}"
+
+
+def test_an_engine_that_cant_load_leaves_the_open_commands_working(monkeypatch):
+    """Fluvv Engine installed without the Spark it needs: the open commands
+    still run, and the engine's say what's missing."""
+    import importlib
+
+    from typer.testing import CliRunner
+
+    from fluvv import cli
+
+    missing = "Fluvv Engine runs on Spark, which isn't installed here: install fluvv-engine[local]"
+
+    class _EntryPoint:
+        module = "fluvv_engine.cli"
+
+        def load(self):
+            raise ModuleNotFoundError(missing, name="pyspark")
+
+    real_import = importlib.import_module
+
+    def import_module(name, *args, **kwargs):
+        if name == "fluvv_engine":
+            raise ModuleNotFoundError(missing, name="pyspark")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "entry_points", lambda group: [_EntryPoint()])
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    linted = CliRunner().invoke(cli.build_app(), ["lint", str(EXAMPLE / "contracts/silver/sales/cars.yaml")])
+    assert linted.exit_code == 0, linted.output
+    for command in (["ingest", "contracts/silver/sales/cars.yaml"], ["license", "report"]):
+        result = CliRunner().invoke(cli.build_app(), command)
+        assert result.exit_code == 1 and "fluvv-engine[local]" in result.output, result.output
+        assert ".." not in result.output
+
+
+def test_a_plugin_missing_a_module_of_its_own_keeps_its_traceback(monkeypatch):
+    """A plugin whose package loads but lacks a module of its own is broken,
+    not missing a dependency. `fluvv` stands in for its package, since it
+    always loads here, as Fluvv Engine may not."""
+    from fluvv import cli
+
+    class _EntryPoint:
+        module = "fluvv.plugin"
+
+        def load(self):
+            raise ModuleNotFoundError("no module named fluvv.plugin_missing", name="fluvv.plugin_missing")
+
+    monkeypatch.setattr(cli, "entry_points", lambda group: [_EntryPoint()])
+    with pytest.raises(ModuleNotFoundError):
+        cli.build_app()

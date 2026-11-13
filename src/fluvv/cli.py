@@ -24,7 +24,7 @@ PLUGIN_GROUP = "fluvv.commands"
 
 # Fluvv Engine's commands. Listed only so that, without the engine, they
 # say where they come from instead of failing as unknown commands.
-ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-openmetadata")
+ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-openmetadata", "license")
 
 
 def _yaml_files(path: Path) -> list[Path]:
@@ -264,25 +264,27 @@ def impact_command(
     typer.echo(shown)
 
 
-def _engine_installed() -> bool:
+def _engine_unavailable() -> str:
+    """Why an engine command isn't here."""
     try:
         importlib.import_module("fluvv_engine")
     except ModuleNotFoundError as exc:
-        if exc.name != "fluvv_engine":
-            raise  # installed, but broken: keep the traceback
-        return False
-    return True
+        if exc.name == "fluvv_engine":
+            return "is part of Fluvv Engine, which isn't installed"
+        # Installed, but something it needs isn't, such as Spark: an install
+        # to fix, whose message says how. Other errors keep their traceback.
+        return f"can't run: {exc}"
+    # The engine accepts any fluvv of its major version, so an installed
+    # engine may predate a command this fluvv knows it for.
+    return "needs a newer Fluvv Engine than the one installed"
 
 
 def _engine_required(name: str) -> Callable[[], None]:
     def command() -> None:
-        # The engine accepts any fluvv of its major version, so an installed
-        # engine may predate a command this fluvv knows it for.
-        reason = "needs a newer Fluvv Engine than the one installed" if _engine_installed() else "is part of Fluvv Engine, which isn't installed"
-        typer.echo(f"`fluvv {name}` {reason}. See https://fluvv.se/engine.", err=True)
+        typer.echo(f"`fluvv {name}` {_engine_unavailable().rstrip('.')}. See https://fluvv.se/engine.", err=True)
         raise typer.Exit(code=1)
 
-    command.__doc__ = "Part of Fluvv Engine (not installed)."
+    command.__doc__ = "Part of Fluvv Engine, which can't run here."
     return command
 
 
@@ -293,8 +295,29 @@ def _print_version(show: bool) -> None:
         raise typer.Exit()
 
 
+def _loads(package: str) -> bool:
+    try:
+        importlib.import_module(package)
+    except ImportError:
+        return False
+    return True
+
+
 def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
-    return [ep.load() for ep in entry_points(group=PLUGIN_GROUP)]
+    registrars = []
+    for ep in entry_points(group=PLUGIN_GROUP):
+        try:
+            registrars.append(ep.load())
+        except ModuleNotFoundError as exc:
+            # A plugin installed without something it needs, such as Fluvv
+            # Engine without Spark, mustn't take the open commands down with
+            # it; its own commands say what's missing (_engine_required). A
+            # module of its own, or of fluvv, missing from a package that
+            # loads is a bug: its traceback stays.
+            if (exc.name or "").split(".")[0] in (ep.module.split(".")[0], "fluvv") and _loads(ep.module.split(".")[0]):
+                raise
+            continue
+    return registrars
 
 
 def build_app() -> typer.Typer:
@@ -327,7 +350,7 @@ def build_app() -> typer.Typer:
     for register in _plugin_registrars():
         register(app)
 
-    registered = {info.name for info in app.registered_commands}
+    registered = {info.name for info in app.registered_commands} | {info.name for info in app.registered_groups}
     for name in ENGINE_COMMANDS:
         if name not in registered:
             app.command(
