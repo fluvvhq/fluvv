@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 import typer
+from typer.core import TyperGroup
 
-from fluvv import views
+from fluvv import publishers, views
 from fluvv.contract import PROJECT_FILE, InvalidProjectFileError, Layout, RepoRootNotFoundError, project_layout
 from fluvv.export import export_artifacts
 from fluvv.lint import lint
@@ -18,15 +19,18 @@ from fluvv.variables import InvalidVariableValueError, UnknownServerError, Unres
 
 # Installed packages add commands to the `fluvv` CLI by registering a
 # `register(app)` function under this entry-point group. Fluvv Engine adds
-# ingest and license this way, and its OpenMetadata adapter,
-# fluvv-openmetadata, the OpenMetadata commands, so the open package never
-# imports either.
+# ingest and license this way, so the open package never imports it. A
+# metadata catalog's adapter adds `fluvv publish <catalog>` and `fluvv
+# prune <catalog>` through `fluvv.publishers` (fluvv/publishers.py), and its
+# other commands, such as setup-openmetadata, through this group.
 PLUGIN_GROUP = "fluvv.commands"
 
 # The commands of the packages that add them, with each package's module,
 # name and page. Listed only so that, without the package, they say where
 # they come from instead of failing as unknown commands.
 ENGINE_COMMANDS = ("ingest", "license")
+# push- and prune-openmetadata are `publish openmetadata` and `prune
+# openmetadata` by their older names, deprecated until fluvv 4.0.
 OPENMETADATA_COMMANDS = ("push-openmetadata", "prune-openmetadata", "setup-openmetadata")
 _PROVIDERS = (
     (ENGINE_COMMANDS, "fluvv_engine", "Fluvv Engine", "https://fluvv.se/engine"),
@@ -310,11 +314,11 @@ def _loads(package: str) -> bool:
     return True
 
 
-def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
-    registrars = []
-    for ep in entry_points(group=PLUGIN_GROUP):
+def _loaded(group: str) -> list[Any]:
+    loaded = []
+    for ep in entry_points(group=group):
         try:
-            registrars.append(ep.load())
+            loaded.append(ep.load())
         except ModuleNotFoundError as exc:
             # A plugin installed without something it needs, such as Fluvv
             # Engine without Spark, mustn't take the open commands down with
@@ -324,7 +328,30 @@ def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
             if (exc.name or "").split(".")[0] in (ep.module.split(".")[0], "fluvv") and _loads(ep.module.split(".")[0]):
                 raise
             continue
-    return registrars
+    return loaded
+
+
+def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
+    return _loaded(PLUGIN_GROUP)
+
+
+def _publisher_registrars() -> list[Callable[[typer.Typer, typer.Typer], None]]:
+    return [publisher.register for publisher in _loaded(publishers.GROUP)]
+
+
+# A stand-in takes any arguments, so it can say what's missing instead of
+# complaining about them.
+_STAND_IN = {"allow_extra_args": True, "ignore_unknown_options": True}
+
+
+class _Catalogs(TyperGroup):
+    """`fluvv publish` and `fluvv prune`: a catalog no adapter is installed
+    for is refused as `Contract.publish` refuses it, naming those that are."""
+
+    def resolve_command(self, ctx: typer.Context, args: list[str]):
+        if args and not args[0].startswith("-") and self.get_command(ctx, args[0]) is None:
+            raise typer.BadParameter(publishers.unknown(args[0]), ctx=ctx, param_hint="CATALOG")
+        return super().resolve_command(ctx, args)
 
 
 def build_app() -> typer.Typer:
@@ -354,6 +381,24 @@ def build_app() -> typer.Typer:
     app.add_typer(list_app, name="list")
     app.command(name="show")(show_command)
     app.command(name="impact")(impact_command)
+    publish_app = typer.Typer(
+        cls=_Catalogs,
+        help="Publish contracts and their run records to a metadata catalog, through its adapter.",
+        no_args_is_help=True,
+    )
+    prune_app = typer.Typer(
+        cls=_Catalogs,
+        help="Remove from a metadata catalog what no contract produces anymore, through its adapter.",
+        no_args_is_help=True,
+    )
+    for register in _publisher_registrars():
+        register(publish_app, prune_app)
+    for catalog, (module, package, page) in publishers.KNOWN.items():
+        for verb, group in (("publish", publish_app), ("prune", prune_app)):
+            if catalog not in {info.name for info in group.registered_commands}:
+                group.command(name=catalog, context_settings=_STAND_IN)(_required(f"{verb} {catalog}", module, package, page))
+    app.add_typer(publish_app, name="publish")
+    app.add_typer(prune_app, name="prune")
     for register in _plugin_registrars():
         register(app)
 
@@ -361,10 +406,7 @@ def build_app() -> typer.Typer:
     for names, module, package, page in _PROVIDERS:
         for name in names:
             if name not in registered:
-                app.command(
-                    name=name,
-                    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-                )(_required(name, module, package, page))
+                app.command(name=name, context_settings=_STAND_IN)(_required(name, module, package, page))
     return app
 
 

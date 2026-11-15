@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 import fluvv
-from fluvv import cli, manifest
+from fluvv import cli, manifest, publishers
 
 EXAMPLE = Path(__file__).resolve().parent / "fixtures" / "sales"
 
@@ -119,6 +119,10 @@ def test_top_level_exports_are_kept():
     assert EXPORTS <= set(fluvv.__all__)
 
 
+def test_contract_publishes_by_catalog_name():
+    assert _parameters(fluvv.Contract.publish) == "(self, spark, to, repo_root='.')"
+
+
 def test_contract_keeps_path_doc_id_and_server():
     contract = fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml")
     assert contract.path == EXAMPLE / "contracts/silver/sales/cars.yaml"
@@ -130,3 +134,4 @@ def test_manifest_version_and_plugin_group_stay_put():
     # A new manifestVersion means a key removed or changed: a major release.
     assert manifest.MANIFEST_VERSION == "2"
     assert cli.PLUGIN_GROUP == "fluvv.commands"
+    assert publishers.GROUP == "fluvv.publishers"

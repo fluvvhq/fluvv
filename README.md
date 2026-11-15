@@ -106,9 +106,11 @@ project.impact("silver.sales.cars.price")            # [{'contract': 'gold.sales
 
 Building the tables on Spark and Delta Lake and keeping their run records
 is [Fluvv Engine](https://fluvv.se/engine). It installs on top of this
-package and adds `ingest` to the same `fluvv` CLI. Publishing them to
-OpenMetadata is the engine's OpenMetadata adapter, `fluvv-openmetadata`, a
-package installed beside it, which adds the OpenMetadata commands.
+package and adds `ingest` to the same `fluvv` CLI. Publishing them to a
+metadata catalog is that catalog's adapter, a package installed beside the
+engine: `fluvv-openmetadata` for OpenMetadata, with which `fluvv publish
+openmetadata` (`Contract.publish(spark, to="openmetadata")`) publishes
+contracts and their run records.
 
 ## Versioning
 
@@ -141,6 +143,12 @@ a command option or a manifest key isn't a breaking change.
   - `fluvv.semantic`: `ProjectCheckError`
   - The `fluvv.commands` entry point: a `register(app)` function, given
     the CLI's Typer app, that adds commands to it.
+  - The `fluvv.publishers` entry point, for a metadata catalog's adapter,
+    named for its catalog: a module with `publish(contract, spark,
+    repo_root)`, which `Contract.publish(spark, to=<name>)` calls, and
+    `register(publish_app, prune_app)`, given the Typer apps of `fluvv
+    publish` and `fluvv prune`, that adds a command named for the catalog
+    to each.
 
 ## Documentation
 

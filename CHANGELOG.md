@@ -4,6 +4,27 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
+## [Unreleased]
+
+### Added
+
+- `Contract.publish(spark, to=<catalog>)`, `fluvv publish <catalog>` and
+  `fluvv prune <catalog>`: publishing to a metadata catalog by its name,
+  through its adapter, which registers itself under the new
+  `fluvv.publishers` entry point. So fluvv needs no new method or release
+  for a new catalog. With `fluvv-openmetadata` 1.1, `to="openmetadata"` and
+  `fluvv publish openmetadata` do what `push_to_openmetadata()` and
+  `push-openmetadata` do. Without the catalog's adapter, each says which
+  package to install; a catalog no adapter is installed for is refused,
+  naming the installed ones.
+
+### Deprecated
+
+- `Contract.push_to_openmetadata()`, for `Contract.publish(spark,
+  to="openmetadata")`, which it calls after a `DeprecationWarning`. It goes
+  in fluvv 4.0, as do `push-openmetadata` and `prune-openmetadata`, which
+  fluvv-openmetadata keeps as deprecated names until then.
+
 ## [3.0.0] - 2026-11-15
 
 One contract for every environment: a `${VAR}` in any string, filled in

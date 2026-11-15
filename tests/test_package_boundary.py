@@ -133,11 +133,14 @@ def test_engine_commands_name_fluvv_engine_when_it_is_missing(monkeypatch, witho
 
 @pytest.fixture
 def without_openmetadata(monkeypatch):
-    """Make `import fluvv_openmetadata` fail, as it does where only the engine is installed."""
-    monkeypatch.setitem(sys.modules, "fluvv_openmetadata", None)
+    """Make `import fluvv_openmetadata` fail, as it does where only the engine
+    is installed. Its modules an earlier test imported go too: Python would
+    find a cached `fluvv_openmetadata.publisher` without its package."""
+    for name in [name for name in sys.modules if name.startswith("fluvv_openmetadata.")] + ["fluvv_openmetadata"]:
+        monkeypatch.setitem(sys.modules, name, None)
 
 
-def test_the_openmetadata_push_names_its_adapter_when_it_is_missing(monkeypatch, without_openmetadata):
+def test_publishing_to_openmetadata_names_its_adapter_when_it_is_missing(monkeypatch, without_openmetadata):
     """It's a package of its own beside the engine, so it's named, not the engine."""
     from typer.testing import CliRunner
 
@@ -145,13 +148,93 @@ def test_the_openmetadata_push_names_its_adapter_when_it_is_missing(monkeypatch,
 
     contract = fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml")
     with pytest.raises(product.EngineRequiredError, match="part of fluvv-openmetadata") as excinfo:
+        contract.publish(spark=None, to="openmetadata")
+    assert "Contract.publish(to='openmetadata')" in str(excinfo.value)
+    with pytest.warns(DeprecationWarning, match="publish"), pytest.raises(product.EngineRequiredError, match="fluvv-openmetadata"):
         contract.push_to_openmetadata(spark=None)
-    assert "Contract.push_to_openmetadata()" in str(excinfo.value)
     monkeypatch.setattr(cli, "_plugin_registrars", lambda: [])
-    for command in cli.OPENMETADATA_COMMANDS:
-        result = CliRunner().invoke(cli.build_app(), [command])
-        assert result.exit_code == 1
+    for command in (["publish", "openmetadata"], ["prune", "openmetadata"], *([name] for name in cli.OPENMETADATA_COMMANDS)):
+        result = CliRunner().invoke(cli.build_app(), command)
+        assert result.exit_code == 1, (command, result.output)
         assert "part of fluvv-openmetadata, which isn't installed" in result.output, command
+
+
+class _Publisher:
+    """An adapter's entry point, as importlib.metadata lists it."""
+
+    def __init__(self, name, module, loaded=None, error=None):
+        self.name, self.module, self.loaded, self.error = name, module, loaded, error
+
+    def load(self):
+        if self.error is not None:
+            raise self.error
+        return self.loaded
+
+
+def _plain(output: str) -> str:
+    """Typer's boxed error as one line of text."""
+    import re
+
+    return " ".join(re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─]", " ", output).split())
+
+
+@pytest.mark.parametrize("installed, named", [([], "none"), (["datahub"], "datahub")])
+def test_a_catalog_no_adapter_is_installed_for_is_refused_naming_those_that_are(monkeypatch, installed, named):
+    import types
+
+    from typer.testing import CliRunner
+
+    from fluvv import cli, publishers
+
+    def plugins(group):
+        if group != publishers.GROUP:
+            return []
+        return [_Publisher(name, f"fluvv_{name}.publisher", types.SimpleNamespace(register=lambda publish, prune: None)) for name in installed]
+
+    monkeypatch.setattr(publishers, "entry_points", plugins)
+    monkeypatch.setattr(cli, "entry_points", plugins)
+    refusal = f"no adapter for the metadata catalog 'nowhere'; installed: {named}"
+    with pytest.raises(ValueError, match=refusal):
+        fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").publish(spark=None, to="nowhere")
+    for verb in ("publish", "prune"):
+        result = CliRunner().invoke(cli.build_app(), [verb, "nowhere"])
+        assert result.exit_code == 2 and refusal in _plain(result.output), result.output
+
+
+def test_an_adapter_missing_a_module_of_its_own_keeps_its_traceback(monkeypatch):
+    """Its package imports, so it's broken, not missing: neither "isn't
+    installed" nor "no adapter" would say what's wrong."""
+    import types
+
+    from fluvv import publishers
+
+    monkeypatch.setitem(sys.modules, "fluvv_datahub", types.ModuleType("fluvv_datahub"))
+    broken = _Publisher("datahub", "fluvv_datahub.publisher", error=ModuleNotFoundError("no fluvv_datahub.client", name="fluvv_datahub.client"))
+    monkeypatch.setattr(publishers, "entry_points", lambda group: [broken])
+    with pytest.raises(ModuleNotFoundError, match="fluvv_datahub.client"):
+        fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").publish(spark=None, to="datahub")
+
+
+def test_the_deprecated_push_works_with_an_adapter_from_before_publishers(monkeypatch):
+    """fluvv-openmetadata 1.0 has the name fluvv 3.0 hands over to and no
+    publisher, so push_to_openmetadata() keeps working with it, while
+    publish() says a newer one is needed."""
+    import types
+
+    from fluvv import publishers
+
+    calls = []
+    adapter = types.ModuleType("fluvv_openmetadata.contract")
+    adapter.push_to_openmetadata = lambda contract, spark, repo_root: calls.append((contract.id, spark, repo_root)) or "report"
+    monkeypatch.setitem(sys.modules, "fluvv_openmetadata", types.ModuleType("fluvv_openmetadata"))
+    monkeypatch.setitem(sys.modules, "fluvv_openmetadata.contract", adapter)
+    monkeypatch.setattr(publishers, "entry_points", lambda group: [])
+    contract = fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml")
+    with pytest.warns(DeprecationWarning, match="publish"):
+        assert contract.push_to_openmetadata(spark="session", repo_root="repo") == "report"
+    assert calls == [("silver.sales.cars", "session", "repo")]
+    with pytest.raises(product.EngineRequiredError, match="needs a newer fluvv-openmetadata"):
+        contract.publish(spark=None, to="openmetadata")
 
 
 @pytest.fixture
@@ -172,6 +255,7 @@ def test_an_older_engine_is_named_as_too_old_not_missing(monkeypatch, older_engi
     with pytest.raises(product.EngineRequiredError, match="needs a newer Fluvv Engine"):
         fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").read(spark=object())
     monkeypatch.setattr(cli, "_plugin_registrars", lambda: [])
+    monkeypatch.setattr(cli, "_publisher_registrars", lambda: [])  # an adapter needs a newer engine than this
     result = CliRunner().invoke(cli.build_app(), ["ingest", "contracts/silver/sales/cars.yaml"])
     assert result.exit_code == 1
     assert "needs a newer Fluvv Engine" in result.output
@@ -201,8 +285,8 @@ def test_an_engine_that_cant_load_leaves_the_open_commands_working(monkeypatch):
     missing = "Fluvv Engine runs on Spark, which isn't installed here: install fluvv-engine[local]"
 
     class _EntryPoint:
-        def __init__(self, module):
-            self.module = module
+        def __init__(self, module, name=""):
+            self.module, self.name = module, name
 
         def load(self):
             raise ModuleNotFoundError(missing, name="pyspark")
@@ -215,17 +299,27 @@ def test_an_engine_that_cant_load_leaves_the_open_commands_working(monkeypatch):
             raise ModuleNotFoundError(missing, name="pyspark")
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr(cli, "entry_points", lambda group: [_EntryPoint("fluvv_engine.cli"), _EntryPoint("fluvv_openmetadata.cli")])
+    from fluvv import publishers
+
+    def plugins(group):
+        if group == publishers.GROUP:
+            return [_EntryPoint("fluvv_openmetadata.publisher", "openmetadata")]
+        return [_EntryPoint("fluvv_engine.cli"), _EntryPoint("fluvv_openmetadata.cli")]
+
+    monkeypatch.setattr(cli, "entry_points", plugins)
+    monkeypatch.setattr(publishers, "entry_points", plugins)
     monkeypatch.setattr(importlib, "import_module", import_module)
     linted = CliRunner().invoke(cli.build_app(), ["lint", str(EXAMPLE / "contracts/silver/sales/cars.yaml")])
     assert linted.exit_code == 0, linted.output
-    for command in (["ingest", "contracts/silver/sales/cars.yaml"], ["license", "report"], ["push-openmetadata"]):
+    for command in (
+        ["ingest", "contracts/silver/sales/cars.yaml"], ["license", "report"], ["publish", "openmetadata"], ["push-openmetadata"],
+    ):
         result = CliRunner().invoke(cli.build_app(), command)
         assert result.exit_code == 1 and "fluvv-engine[local]" in result.output, result.output
         assert ".." not in result.output
     # Not "isn't installed": the adapter is, and the engine's message says what to fix.
     with pytest.raises(ModuleNotFoundError, match=r"fluvv-engine\[local\]"):
-        fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").push_to_openmetadata(spark=None)
+        fluvv.Contract(EXAMPLE / "contracts/silver/sales/cars.yaml").publish(spark=None, to="openmetadata")
 
 
 def test_a_plugin_missing_a_module_of_its_own_keeps_its_traceback(monkeypatch):
