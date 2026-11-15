@@ -3,8 +3,10 @@ that make it a Data Product.
 
 `.lint()`, `.lineage()` and `.test()` without Spark run here, in the open
 package. The methods that read or write data through Spark run in Fluvv
-Engine (`fluvv_engine.contract`); here they only hand over to it, imported
-on first use, so the open package installs and runs without Spark.
+Engine (`fluvv_engine.contract`), and publishing to OpenMetadata in its
+adapter, fluvv-openmetadata (`fluvv_openmetadata.contract`); here they only
+hand over to them, imported on first use, so the open package installs and
+runs without Spark.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ from fluvv.variables import (
 
 if TYPE_CHECKING:
     from datacontract.model.run import Run
-    from fluvv_engine import SyncReport
+    from fluvv_openmetadata import SyncReport
     from pyspark.sql import DataFrame, SparkSession
 
 
@@ -44,7 +46,9 @@ class EngineRequiredError(ImportError):
 
     Raised by the `Contract` methods that read or write data when only the
     open `fluvv` package is installed, or when the installed Fluvv Engine
-    is too old to have the method. The message says which.
+    is too old to have the method, and by `push_to_openmetadata()` without
+    fluvv-openmetadata, the engine's OpenMetadata adapter. The message says
+    which.
 
     See Also
     --------
@@ -86,6 +90,24 @@ def _engine(method: str, contract: Contract | None = None) -> ModuleType:
             "Fluvv Engine than the one installed; see https://fluvv.se/engine."
         )
     return module
+
+
+def _openmetadata(method: str) -> ModuleType:
+    """fluvv-openmetadata, a package of its own beside Fluvv Engine, which
+    it requires."""
+    try:
+        importlib.import_module("fluvv_openmetadata")
+    except ModuleNotFoundError as exc:
+        # As for the engine: only the adapter missing becomes this error. An
+        # adapter whose engine can't import, such as without Spark, keeps
+        # the engine's message.
+        if exc.name != "fluvv_openmetadata":
+            raise
+        raise EngineRequiredError(
+            f"Contract.{method}() is part of fluvv-openmetadata, Fluvv Engine's OpenMetadata adapter, "
+            "which isn't installed; see https://fluvv.se/docs/openmetadata-integration."
+        ) from None
+    return importlib.import_module("fluvv_openmetadata.contract")
 
 
 class Contract:
@@ -427,7 +449,9 @@ class Contract:
     def push_to_openmetadata(self, spark: SparkSession, repo_root: Path | str = ".") -> SyncReport:
         """Publishes this contract to OpenMetadata, like `fluvv push-openmetadata <file>`.
 
-        Needs Fluvv Engine. Pushes the table's catalog entry, its lineage,
+        Needs Fluvv Engine. Also needs fluvv-openmetadata, the engine's
+        OpenMetadata adapter, installed beside it. Pushes the table's
+        catalog entry, its lineage,
         the contract, its run history, profile, sample data and latest
         quality results, from the repository compiled on the spot and the
         contract's run records.
@@ -451,7 +475,7 @@ class Contract:
         Raises
         ------
         EngineRequiredError
-            If Fluvv Engine isn't installed.
+            If fluvv-openmetadata isn't installed.
         ProjectCheckError
             If the repository doesn't compile.
 
@@ -462,4 +486,4 @@ class Contract:
         >>> report.ok  # doctest: +SKIP
         True
         """
-        return _engine("push_to_openmetadata", self).push_to_openmetadata(self, spark, repo_root)
+        return _openmetadata("push_to_openmetadata").push_to_openmetadata(self, spark, repo_root)

@@ -18,13 +18,20 @@ from fluvv.variables import InvalidVariableValueError, UnknownServerError, Unres
 
 # Installed packages add commands to the `fluvv` CLI by registering a
 # `register(app)` function under this entry-point group. Fluvv Engine adds
-# ingest and the OpenMetadata commands this way, so the open package never
-# imports it.
+# ingest and license this way, and its OpenMetadata adapter,
+# fluvv-openmetadata, the OpenMetadata commands, so the open package never
+# imports either.
 PLUGIN_GROUP = "fluvv.commands"
 
-# Fluvv Engine's commands. Listed only so that, without the engine, they
-# say where they come from instead of failing as unknown commands.
-ENGINE_COMMANDS = ("ingest", "push-openmetadata", "prune-openmetadata", "setup-openmetadata", "license")
+# The commands of the packages that add them, with each package's module,
+# name and page. Listed only so that, without the package, they say where
+# they come from instead of failing as unknown commands.
+ENGINE_COMMANDS = ("ingest", "license")
+OPENMETADATA_COMMANDS = ("push-openmetadata", "prune-openmetadata", "setup-openmetadata")
+_PROVIDERS = (
+    (ENGINE_COMMANDS, "fluvv_engine", "Fluvv Engine", "https://fluvv.se/engine"),
+    (OPENMETADATA_COMMANDS, "fluvv_openmetadata", "fluvv-openmetadata", "https://fluvv.se/docs/openmetadata-integration"),
+)
 
 
 def _yaml_files(path: Path) -> list[Path]:
@@ -264,27 +271,27 @@ def impact_command(
     typer.echo(shown)
 
 
-def _engine_unavailable() -> str:
-    """Why an engine command isn't here."""
+def _unavailable(module: str, package: str) -> str:
+    """Why a command another package adds isn't here."""
     try:
-        importlib.import_module("fluvv_engine")
+        importlib.import_module(module)
     except ModuleNotFoundError as exc:
-        if exc.name == "fluvv_engine":
-            return "is part of Fluvv Engine, which isn't installed"
+        if exc.name == module:
+            return f"is part of {package}, which isn't installed"
         # Installed, but something it needs isn't, such as Spark: an install
         # to fix, whose message says how. Other errors keep their traceback.
         return f"can't run: {exc}"
-    # The engine accepts any fluvv of its major version, so an installed
-    # engine may predate a command this fluvv knows it for.
-    return "needs a newer Fluvv Engine than the one installed"
+    # The package accepts any fluvv of its major version, so an installed
+    # one may predate a command this fluvv knows it for.
+    return f"needs a newer {package} than the one installed"
 
 
-def _engine_required(name: str) -> Callable[[], None]:
+def _required(name: str, module: str, package: str, page: str) -> Callable[[], None]:
     def command() -> None:
-        typer.echo(f"`fluvv {name}` {_engine_unavailable().rstrip('.')}. See https://fluvv.se/engine.", err=True)
+        typer.echo(f"`fluvv {name}` {_unavailable(module, package).rstrip('.')}. See {page}.", err=True)
         raise typer.Exit(code=1)
 
-    command.__doc__ = "Part of Fluvv Engine, which can't run here."
+    command.__doc__ = f"Part of {package}, which can't run here."
     return command
 
 
@@ -311,7 +318,7 @@ def _plugin_registrars() -> list[Callable[[typer.Typer], None]]:
         except ModuleNotFoundError as exc:
             # A plugin installed without something it needs, such as Fluvv
             # Engine without Spark, mustn't take the open commands down with
-            # it; its own commands say what's missing (_engine_required). A
+            # it; its own commands say what's missing (_required). A
             # module of its own, or of fluvv, missing from a package that
             # loads is a bug: its traceback stays.
             if (exc.name or "").split(".")[0] in (ep.module.split(".")[0], "fluvv") and _loads(ep.module.split(".")[0]):
@@ -351,12 +358,13 @@ def build_app() -> typer.Typer:
         register(app)
 
     registered = {info.name for info in app.registered_commands} | {info.name for info in app.registered_groups}
-    for name in ENGINE_COMMANDS:
-        if name not in registered:
-            app.command(
-                name=name,
-                context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
-            )(_engine_required(name))
+    for names, module, package, page in _PROVIDERS:
+        for name in names:
+            if name not in registered:
+                app.command(
+                    name=name,
+                    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+                )(_required(name, module, package, page))
     return app
 
 

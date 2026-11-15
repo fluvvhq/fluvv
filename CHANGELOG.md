@@ -29,6 +29,13 @@ version in [the spec](docs/fluvv/SPEC.md).
 
 ### Changed
 
+- `Contract.push_to_openmetadata()` hands over to `fluvv-openmetadata`,
+  Fluvv Engine's OpenMetadata adapter, now a package of its own installed
+  beside the engine, instead of to the engine. Without it, the method
+  raises `EngineRequiredError` and the `push-openmetadata`,
+  `prune-openmetadata` and `setup-openmetadata` commands say it isn't
+  installed. Like `fluvv_engine`, `fluvv_openmetadata` is imported only
+  on first use.
 - A `${NAME}` already in a contract's strings, such as Spark SQL's own
   `${var}` substitution in a transform, is now filled in from the
   environment, and fails without a value or a default.

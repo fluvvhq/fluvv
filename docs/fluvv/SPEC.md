@@ -471,8 +471,8 @@ The product owns its membership: the contracts named by
 `outputPorts[].contractId`. The owning team is `team.name`; experts are
 `team.members` with `role: expert`. Any other ODPS field is allowed and
 validated against the ODPS schema. A product can list any contract, whatever
-its layer. OpenMetadata needs a `domain` on a Data Product, so Fluvv Engine
-doesn't push one without it.
+its layer. OpenMetadata needs a `domain` on a Data Product, so Fluvv
+Engine's OpenMetadata adapter doesn't push one without it.
 
 ### 5.4 Classifications
 

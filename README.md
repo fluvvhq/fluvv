@@ -104,10 +104,11 @@ project.impact("silver.sales.cars.price")            # [{'contract': 'gold.sales
 
 ## Running contracts
 
-Building the tables on Spark and Delta Lake, keeping their run records and
-publishing them to OpenMetadata is [Fluvv Engine](https://fluvv.se/engine).
-It installs on top of this package and adds `ingest` and the catalog
-commands to the same `fluvv` CLI.
+Building the tables on Spark and Delta Lake and keeping their run records
+is [Fluvv Engine](https://fluvv.se/engine). It installs on top of this
+package and adds `ingest` to the same `fluvv` CLI. Publishing them to
+OpenMetadata is the engine's OpenMetadata adapter, `fluvv-openmetadata`, a
+package installed beside it, which adds the OpenMetadata commands.
 
 ## Versioning
 

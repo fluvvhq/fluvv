@@ -2,7 +2,8 @@
 governance file in the repo, plus what's derived from them (lineage,
 glossary synonyms). Like dbt's `manifest.json`, it's the single input an
 integration reads instead of re-deriving everything from YAML -- Fluvv
-Engine's OpenMetadata push reads nothing else from the repo.
+Engine's OpenMetadata adapter, fluvv-openmetadata, reads nothing else from
+the repo.
 Each contract entry also carries the contract as written (`odcs`) and its
 resolved ingestion config with the composed SQL (`ingestion`), the way
 dbt's manifest carries each node's source. `server` and `ingestion` are as
