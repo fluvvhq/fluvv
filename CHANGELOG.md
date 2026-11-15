@@ -4,7 +4,14 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
-## [Unreleased]
+## [3.0.0] - 2026-11-15
+
+One contract for every environment: a `${VAR}` in any string, filled in
+from the environment, and a server chosen per run (spec v3.0.0). A major
+release, because `fluvv export` writes to `target/` by default and a
+`${NAME}` already in a contract's strings is now filled in: see Changed.
+Running these contracts needs Fluvv Engine 3.0, and publishing them to
+OpenMetadata needs `fluvv-openmetadata` 1.0.
 
 ### Added
 
@@ -36,9 +43,10 @@ version in [the spec](docs/fluvv/SPEC.md).
   `prune-openmetadata` and `setup-openmetadata` commands say it isn't
   installed. Like `fluvv_engine`, `fluvv_openmetadata` is imported only
   on first use.
-- A `${NAME}` already in a contract's strings, such as Spark SQL's own
-  `${var}` substitution in a transform, is now filled in from the
-  environment, and fails without a value or a default.
+- **Breaking:** a `${NAME}` already in a contract's strings, such as
+  Spark SQL's own `${var}` substitution in a transform, is now filled in
+  from the environment, and fails without a value or a default: set the
+  variable, or write `${NAME:-default}`.
 - **Breaking:** `fluvv export` and `export_artifacts` write to the
   repository's `target/` folder by default, where `fluvv compile` writes the
   manifest, instead of the contracts folder. Like the manifest, the files
