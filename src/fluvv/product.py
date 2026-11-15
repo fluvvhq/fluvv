@@ -271,8 +271,9 @@ class Contract:
         catalog registration strategy in `register`. Every run that starts,
         successful or not, adds a row to the contract's `ingestion_logs`,
         and a successful one adds its business metrics to
-        `business_metrics`. One refused before it starts (a variable with no
-        value, nowhere to read or write, no license) adds none.
+        `business_metrics`. One refused before it starts (a registration
+        strategy the engine doesn't have, a variable with no value, nowhere
+        to read or write, no license) adds none.
 
         Upstream contracts aren't run first: a source is read as its table
         is now. The steps are in
@@ -295,6 +296,9 @@ class Contract:
         ------
         EngineRequiredError
             If Fluvv Engine isn't installed.
+        ValueError
+            If `register` names a strategy the engine doesn't have, before
+            anything is read or written.
         RuntimeError
             If this contract hasn't run before and the license refuses new
             ones. See
