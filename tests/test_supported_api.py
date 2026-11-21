@@ -27,6 +27,7 @@ FUNCTIONS = {
         "resolve_extension": "(extension, repo_root, server=None, variables=None)",
         "get_custom_property": "(doc, property_name)",
         "server_location": "(server)",
+        "server_table": "(server, doc)",
     },
     "fluvv.governance": {
         "load_contracts": "(repo_root='.')",

@@ -253,7 +253,9 @@ class Contract:
         catalog registration strategy in `register`. Every run that starts,
         successful or not, adds a row to the contract's `ingestion_logs`,
         and a successful one adds its business metrics to
-        `business_metrics`. One refused before it starts (a registration
+        `business_metrics`. A table its server names in a catalog is written
+        by that name, which puts it there, so `register` doesn't run for it.
+        One refused before it starts (a registration
         strategy the engine doesn't have, a variable with no value, nowhere
         to read or write, no license) adds none.
 
@@ -341,7 +343,7 @@ class Contract:
         return _engine("test", self).test(self, spark)
 
     def read(self, spark: SparkSession) -> DataFrame:
-        """The contract's table, read from the location of the server it's loaded for.
+        """The contract's table, read from the server it's loaded for: its location, or by name.
 
         Needs Fluvv Engine.
 

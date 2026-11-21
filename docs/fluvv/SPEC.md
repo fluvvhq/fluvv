@@ -142,7 +142,13 @@ fluvv compile --server lakehouse  # STORAGE_ACCOUNT from the environment or .env
   one place is there in every environment, where datacontract-cli would
   refuse the name. Without `--server`, each contract uses its first. A
   server's table is at its `path`, or its `location` for the types that
-  have one. With `--server`, a source that reads another contract reads
+  have one. A server with ODCS's `catalog` and `schema` and neither, as a
+  `databricks` server has, names the table instead:
+  `<catalog>.<schema>.<table>`, where the table is the schema object's
+  `physicalName`, or its `name` without one, as datacontract-cli reads it.
+  It's a managed table, read and written by that name, so the catalog
+  decides where it's stored and who may read it. With `--server`, a
+  source that reads another contract reads
   that contract's server of the same name, or its only one
   (`unknown-server`, Section 6.3); without it, that contract's first too.
 - **When.** Values are filled in where a contract is used: compile,
@@ -184,7 +190,7 @@ sources[]  →  each read into a DataFrame  →  registered as a temp view named
                        contract-level transform.sql combines the views (join / union / aggregate)
                                                    |
                                                    v
-             result written to the location of the server the run uses (Section 1.3)
+             result written to the server the run uses: its location, or its table by name (Section 1.3)
 ```
 
 SQL is the **only** transform mechanism, used uniformly whether a layer is
@@ -221,8 +227,9 @@ All of these are `customProperties` entries on the contract.
 |---|---|---|---|
 | `id` | string | yes | Local alias. The pipeline registers this source as a temp view under this name; transforms reference it in `FROM`/`JOIN`. |
 | `contract` | string \| `null` | yes | Repo-relative path to the Fluvv contract governing this source (e.g. `contracts/bronze/sales/cars.yaml`), or `null` when the source is pre-contract, e.g. a landing zone. |
-| `location` | string | only when `contract` is `null` | Storage path to read; it may hold variables (Section 1.3). **Omitted when `contract` is set**: derived from that contract's server (Section 1.3), so where a table lives is stated once, by the contract that owns it. |
-| `format` | string | only when `contract` is `null` | Storage format, e.g. `csv`, `delta`, `parquet`. Derived like `location`. |
+| `location` | string | when `contract` is `null`, unless `table` is set | Storage path to read; it may hold variables (Section 1.3). **Omitted when `contract` is set**: derived from that contract's server (Section 1.3), so where a table lives is stated once, by the contract that owns it. |
+| `format` | string | when `contract` is `null`, unless `table` is set | Storage format, e.g. `csv`, `delta`, `parquet`. Derived like `location`. |
+| `table` | string | no | A table in a catalog, by name, e.g. `main.raw.orders`, read by name instead of from a `location`: on a source with `contract: null`, in place of `location` and `format`, for a table no contract produces. **Omitted when `contract` is set**: derived from that contract's server when it names a table (Section 1.3). |
 | `options` | object | no | Format-specific read options, e.g. `{header: true}` for CSV. |
 | `read` | string | yes | Name of the ingestion framework's reader strategy, e.g. `spark_read_file`. Per source, so one contract can mix read strategies. |
 | `transform` | `Transform` | no | Per-source step (Section 3.2). |
@@ -376,7 +383,7 @@ Fluvv only constrains how it's used, and how it reaches catalogs.
 | `description` | column | Describes *this column*: renames, aggregation scope, nulls. The business definition of the term lives in the glossary, not here. |
 | `classification` | column | Optional. One of the repository's values (Section 5.4), by default `public`, `internal`, `pii`, `sensitive-pii` (→ OpenMetadata `PII.None`, `PII.None`, `PII.NonSensitive`, `PII.Sensitive`). |
 | `primaryKey` / `primaryKeyPosition` | column | A single-column key → column constraint `PRIMARY_KEY`; composite → a table `PRIMARY_KEY` constraint. Otherwise `unique` → `UNIQUE`, `required` → `NOT_NULL`. |
-| `physicalName` | schema object | The table's display name. Avoid it for now: `datacontract-cli` 1.1.1 and 1.1.2 build the local test view under `name` but look the table up by `physicalName`, so every `test()` check on a local file-backed table fails. |
+| `physicalName` | schema object | The table's display name, and on a server that names its table (Section 1.3), that name in the catalog, as datacontract-cli reads it. Avoid it on a server with a path for now: `datacontract-cli` 1.1.1 and 1.1.2 build the local test view under `name` but look the table up by `physicalName`, so every `test()` check on a local file-backed table fails. |
 | `description.purpose` / `usage` / `limitations` | top level | The table description. |
 | `tags` | top level | Tags under a `Fluvv` classification. Don't repeat what's structural (layer, domain, table name). |
 | `team.name` | top level | The table's owning team. The v3.1.0 team object, the same shape as an ODPS product's `team`. The deprecated v3.0 array (`team: [{username, role: owner}]`) is rejected (`team-array-deprecated`). |
@@ -529,8 +536,9 @@ it's in.
 
 | Code | Meaning |
 |---|---|
-| `source-location-redundant` | `location`/`format` set on a source that has a `contract`. |
-| `source-location-missing` | `location`/`format` missing on a source with `contract: null`. |
+| `source-location-redundant` | `location`, `format` or `table` set on a source that has a `contract`. |
+| `source-location-missing` | `location`/`format` missing on a source with `contract: null` and no `table`. |
+| `source-table-and-location` | A source with `contract: null` gives `table` and also `location` or `format`: it's one or the other. |
 | `source-transform-foreign-reference` | A per-source transform reads something other than its own source. |
 | `missing-combine-transform` | Two or more sources but no contract-level transform. |
 | `unknown-source-reference` | The contract-level transform reads a table that isn't a declared source (CTE names are fine). |
@@ -560,7 +568,7 @@ Schema validation for the file's `kind`, then:
 | `source-contract-not-found` | contract | `sources[].contract` doesn't resolve to a file. |
 | `source-cycle` | contract | Contracts read each other in a cycle, or one reads itself: a table upstream of itself can't be built from nothing. |
 | `duplicate-contract-id` | contract | Two contracts have the same `id`. |
-| `duplicate-target` | contract | Two contracts write to the same place (the path or location of the server compiled for, filled in), or have the same layer, domain and schema name, which would give them one set of run records and one catalog entry. Contracts that all append to one path are fine: they fan in to one table, and nothing is lost. |
+| `duplicate-target` | contract | Two contracts write to the same place (the path or location of the server compiled for, filled in, or the table it names), or have the same layer, domain and schema name, which would give them one set of run records and one catalog entry. Contracts that all append to one path are fine: they fan in to one table, and nothing is lost. |
 | `relationship-target-not-found` | contract | A relationship's `to` doesn't resolve to a contract file, schema object and column. |
 | `relationship-target-not-unique` | contract | A relationship's target is neither unique nor the target's primary key. |
 | `unknown-domain` | contract, glossary, product | The `domain` it names has no domain file. A contract, glossary or product with no `domain` is fine. |
@@ -595,7 +603,7 @@ records.
 
 | Key | Contents |
 |---|---|
-| `contracts[]` | Per table: domain and layer (`null` if it has none), owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), the server it was compiled for (filled in, apart from its custom properties), Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
+| `contracts[]` | Per table: domain and layer (`null` if it has none), owner, experts, tags, retention and freshness (ISO), primary key, relationships (resolved to target contract ids), the server it was compiled for (filled in, apart from its custom properties), Data Products, upstream/downstream contract ids, and columns. Columns carry ODCS's own `transformSourceObjects` / `transformLogic`, **derived** from the transform SQL. Also `ingestion`: the resolved sources (with upstream contract ids and derived locations, or `table` names for a source read by name, whose `location` and `format` are then `null`), both transform levels, and `effectiveSql` (per-source transforms as CTEs ahead of the contract-level SQL). Also `odcs`: the contract as written, for consumers that need the document itself, e.g. OpenMetadata's native ODCS import. |
 | `domains[]` | Owner, experts, description. |
 | `glossaries[]` | Terms with definition, synonyms (explicit + derived) and related terms. `domain` is `null` for the shared glossary. |
 | `classifications[]` | Each value a `classification` may take, the repository's or the default, with its `catalogTag`. |
@@ -664,7 +672,7 @@ defaults to the repository's `target/` folder, where compile writes the manifest
 | Artifact | Path | Source |
 |---|---|---|
 | Spark schema | `<dir>/spark_schemas/<mirrored path>.py` | `datacontract-cli`'s `export("spark")`, unchanged. |
-| Ingestion config | `<dir>/ingestion_config/<mirrored path>.json` | The parsed `sources`/`transform`/`ingestion_config`/`businessMetrics`, **resolved**: contract-backed sources get their `location`/`format` filled in, so the engine never needs to read another contract. |
+| Ingestion config | `<dir>/ingestion_config/<mirrored path>.json` | The parsed `sources`/`transform`/`ingestion_config`/`businessMetrics`, **resolved**: contract-backed sources get their `location`/`format`, or their `table` for an upstream by name, filled in, so the engine never needs to read another contract. |
 
 Like the manifest (Section 7), these are derived files: regenerate them
 rather than hand-editing them, and don't commit them.

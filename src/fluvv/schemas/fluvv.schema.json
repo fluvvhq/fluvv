@@ -40,12 +40,17 @@
         "location": {
           "type": "string",
           "minLength": 1,
-          "description": "Storage path this source is read from. Required when `contract` is null; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
+          "description": "Storage path this source is read from. Required when `contract` is null, unless `table` names one; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
         },
         "format": {
           "type": "string",
           "minLength": 1,
-          "description": "Storage format of this source, e.g. csv, delta, parquet, json. Required when `contract` is null; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
+          "description": "Storage format of this source, e.g. csv, delta, parquet, json. Required when `contract` is null, unless `table` names one; must be omitted when `contract` is set (it is derived from that contract's `servers`)."
+        },
+        "table": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A table in a catalog, by name (e.g. main.raw.orders), read instead of a location: on a source with `contract` null, in place of `location` and `format`. Must be omitted when `contract` is set (derived from that contract's server, when it names a table)."
         },
         "options": {
           "type": "object",

@@ -46,6 +46,10 @@ class Source(BaseModel):
         resolved.
     format : str or None
         Its format, e.g. `"delta"` or `"csv"`. Filled in like `location`.
+    table : str or None
+        Its name in a catalog, e.g. `"main.raw.orders"`, read by name
+        instead of from a `location`. Filled in like `location` from an
+        upstream on a server by name.
     options : dict
         Reader options.
     read : str
@@ -63,6 +67,10 @@ class Source(BaseModel):
     `servers` (fluvv.contract.resolve_extension)."""
     format: str | None = None
     """Same as `location`."""
+    table: str | None = None
+    """A table in a catalog, by name: on a `contract: null` source, instead
+    of `location` and `format`; on a contract-backed one, derived from an
+    upstream server by name (fluvv.contract.server_table)."""
     options: dict[str, Any] = Field(default_factory=dict)
     read: str
     """Name of the ingestion framework's reader function for this source, e.g. spark_read_file."""

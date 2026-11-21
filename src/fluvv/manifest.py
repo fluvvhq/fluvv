@@ -96,6 +96,7 @@ def _ingestion(
             "contract": id_by_path.get((repo_root / s.contract).resolve()) if s.contract else None,
             "location": s.location,
             "format": s.format,
+            "table": s.table,
             "read": s.read,
             "transform": s.transform.sql if s.transform else None,
         }

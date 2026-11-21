@@ -10,7 +10,7 @@ from typing import Any, Mapping
 import yaml
 
 from fluvv.models import FluvvExtension
-from fluvv.variables import UnknownServerError, choose_server, environment, resolve_contract, resolve_server_variables
+from fluvv.variables import UnknownServerError, choose_server, environment, resolve_contract, resolve_server_variables, resolve_variables
 
 FLUVV_CUSTOM_PROPERTIES = ("sources", "ingestion_config")
 OPTIONAL_FLUVV_CUSTOM_PROPERTIES = ("transform", "businessMetrics")
@@ -194,22 +194,40 @@ def server_location(server: dict[str, Any]) -> str | None:
     return server.get("path") or server.get("location")
 
 
+def server_table(server: dict[str, Any], doc: dict[str, Any]) -> str | None:
+    """The name a server gives the contract's table in a catalog, for a
+    server with no place on storage of its own: `<catalog>.<schema>.<table>`
+    from ODCS's `catalog` and `schema`, as a `databricks` server has, and
+    the schema object's `physicalName`, or its `name` without one, the way
+    datacontract-cli reads one. None for a server with a path or location,
+    which is read and written there. `server` and `doc` are as a run uses
+    them, with their variables filled in."""
+    if server_location(server) is not None or not (server.get("catalog") and server.get("schema")):
+        return None
+    schema_object = doc["schema"][0]
+    return f"{server['catalog']}.{server['schema']}.{schema_object.get('physicalName') or schema_object['name']}"
+
+
 def resolve_extension(
     extension: FluvvExtension, repo_root: Path, server: str | None = None, variables: Mapping[str, str] | None = None
 ) -> FluvvExtension:
     """Fills each contract-backed source's `location`/`format` from that
-    contract's own server, so where a table lives is stated once -- in the
+    contract's own server, or its `table` for a server by name
+    (`server_table`), so where a table lives is stated once -- in the
     contract that owns it. The server is the upstream's one called `server`,
     or its only one (fluvv.variables.choose_server); without `server`, its
     first, as every contract uses its first then. Its variables are filled
     in from `variables`
     (fluvv.variables.environment() if not given).
-    Pre-contract sources (`contract: null`) keep what they declare."""
+    Pre-contract sources (`contract: null`) keep what they declare: a
+    `location` and `format`, or a `table`."""
     sources = []
     for source in extension.sources:
         if source.contract is None:
-            if not (source.location and source.format):
-                raise UnresolvableSourceError(f"source '{source.id}': `location` and `format` are required when `contract` is null")
+            if not (source.table or (source.location and source.format)):
+                raise UnresolvableSourceError(
+                    f"source '{source.id}': `location` and `format`, or `table`, are required when `contract` is null"
+                )
             sources.append(source)
             continue
         upstream_path = Path(repo_root) / source.contract
@@ -218,8 +236,9 @@ def resolve_extension(
                 f"source '{source.id}': contract '{source.contract}' does not exist under {repo_root}; "
                 f"if that isn't the repository's root, a {PROJECT_FILE} there settles it"
             )
+        upstream = load_odcs_document(upstream_path)
         try:
-            chosen = choose_server(load_odcs_document(upstream_path), server)
+            chosen = choose_server(upstream, server)
         except UnknownServerError as exc:
             raise UnknownServerError(f"source '{source.id}': {source.contract}: {exc}") from None
         if chosen is None:
@@ -227,7 +246,15 @@ def resolve_extension(
         if variables is None:
             variables = environment()
         filled = resolve_server_variables(chosen, variables, custom_properties=False)
-        sources.append(source.model_copy(update={"location": server_location(filled), "format": filled.get("format")}))
+        # Its table's name may hold a variable too, filled in as its own run fills it.
+        names = {
+            key: resolve_variables(value, f"{source.contract}: schema {key}", variables)
+            for key, value in (upstream.get("schema") or [{}])[0].items()
+            if key in ("name", "physicalName")
+        }
+        sources.append(source.model_copy(update={
+            "location": server_location(filled), "format": filled.get("format"), "table": server_table(filled, {"schema": [names]}),
+        }))
     return extension.model_copy(update={"sources": sources})
 
 

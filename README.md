@@ -130,7 +130,7 @@ a command option or a manifest key isn't a breaking change.
   nothing else and so works with any fluvv of its major version:
   - `fluvv.contract`: `find_repo_root`, `load_odcs_document`,
     `parse_extension`, `resolve_extension`, `get_custom_property`,
-    `server_location`, `RepoRootNotFoundError`
+    `server_location`, `server_table`, `RepoRootNotFoundError`
   - `fluvv.governance`: `load_contracts`, `schema_object`, `columns`,
     `primary_key`, `owner`, `layer`, `sla_entry`,
     `retention_period`, `freshness_period`, `freshness_hours`

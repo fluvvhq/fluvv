@@ -6,8 +6,9 @@ version in [the spec](docs/fluvv/SPEC.md).
 
 ## [3.1.0] - 2026-11-15
 
-Publishing to a metadata catalog by its name. Publishing to OpenMetadata
-this way needs `fluvv-openmetadata` 1.1.
+Publishing to a metadata catalog by its name, and tables by name in a
+catalog. Publishing to OpenMetadata this way needs `fluvv-openmetadata` 1.1,
+and running tables by name Fluvv Engine 3.1.
 
 ### Added
 
@@ -20,6 +21,19 @@ this way needs `fluvv-openmetadata` 1.1.
   `push-openmetadata` do. Without the catalog's adapter, each says which
   package to install; a catalog no adapter is installed for is refused,
   naming the installed ones.
+
+- Tables by name in a catalog. A server with ODCS's `catalog` and `schema`
+  and no `path` or `location`, as a `databricks` server has, names its
+  table `<catalog>.<schema>.<schema object name>`, as datacontract-cli
+  reads one; a source that reads it gets that `table` name, and a source
+  with `contract: null` may give a `table` instead of a `location` and
+  `format`. `fluvv.contract.server_table` is supported API. Lint reports a
+  source giving both (`source-table-and-location`), and compile's
+  `duplicate-target` compares table names too. The manifest's sources gain
+  `table`, with `location` and `format` `null` for a source read by name.
+  The table is the schema object's `physicalName`, or its `name`, filled in.
+  Running these needs Fluvv Engine 3.1, and publishing them
+  `fluvv-openmetadata` 1.1.
 
 ### Deprecated
 

@@ -56,6 +56,7 @@ from fluvv.contract import (
     project_layout,
     resolve_extension,
     server_location,
+    server_table,
     yaml_problem,
 )
 from fluvv.models import FluvvExtension
@@ -157,10 +158,12 @@ def check_source_contracts_exist(
 
 
 def check_source_locations(extension: FluvvExtension) -> list[SemanticIssue]:
-    """Where a table lives is stated once: by its own contract's `servers`."""
+    """Where a table lives is stated once: by its own contract's `servers`.
+    A source no contract describes gives a `location` and `format`, or a
+    `table` by name."""
     issues = []
     for source in extension.sources:
-        stated = [f for f in ("location", "format") if getattr(source, f) is not None]
+        stated = [f for f in ("location", "format", "table") if getattr(source, f) is not None]
         if source.contract is not None and stated:
             issues.append(
                 SemanticIssue(
@@ -169,12 +172,21 @@ def check_source_locations(extension: FluvvExtension) -> list[SemanticIssue]:
                     f"'{source.contract}' servers",
                 )
             )
+        if source.contract is None and source.table is not None:
+            if source.location is not None or source.format is not None:
+                issues.append(
+                    SemanticIssue(
+                        "source-table-and-location",
+                        f"source '{source.id}': give `location` and `format`, or `table`, not both",
+                    )
+                )
+            continue
         missing = [f for f in ("location", "format") if getattr(source, f) is None]
         if source.contract is None and missing:
             issues.append(
                 SemanticIssue(
                     "source-location-missing",
-                    f"source '{source.id}': {' and '.join(missing)} required when contract is null",
+                    f"source '{source.id}': {' and '.join(missing)} required when contract is null, or a `table` instead",
                 )
             )
     return issues
@@ -377,8 +389,13 @@ def _distinct_contract_issues(docs_by_path: dict[Path, dict[str, Any]], repo_roo
     and nothing is lost."""
 
     def target(doc: dict[str, Any]) -> str | None:
-        location = server_location((doc.get("servers") or [{}])[0])
-        return os.path.normpath(location) if location else None
+        server = (doc.get("servers") or [{}])[0]
+        location = server_location(server)
+        if location:
+            return os.path.normpath(location)
+        # Spark and Unity Catalog don't tell names apart by case.
+        table = server_table(server, doc) if doc.get("schema") else None
+        return table.lower() if table else None
 
     def fans_in(paths: list[Path]) -> bool:
         docs = [docs_by_path[path] for path in paths]

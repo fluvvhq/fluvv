@@ -501,10 +501,16 @@
                 "description": "Upstream contract id, or null for a pre-contract source."
               },
               "location": {
-                "type": "string"
+                "$ref": "#/$defs/NullableString",
+                "description": "Where it's read from on storage; null for a source read by name."
               },
               "format": {
-                "type": "string"
+                "$ref": "#/$defs/NullableString",
+                "description": "Its storage format; null when its server, read by name, gives none."
+              },
+              "table": {
+                "$ref": "#/$defs/NullableString",
+                "description": "Its name in a catalog, for a source read by name: given on a pre-contract source, or derived from an upstream contract's server by name."
               },
               "read": {
                 "type": "string"
