@@ -1,6 +1,6 @@
 # Fluvv Spec
 
-> **Status:** v3.0.0 (contracts on ODCS v3.1.0). Normative, field-by-field
+> **Status:** v3.1.0 (contracts on ODCS v3.1.0). Normative, field-by-field
 > reference for Fluvv contracts and the governance files around them.
 
 ## 1. What Fluvv is

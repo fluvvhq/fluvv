@@ -4,7 +4,7 @@ Notable changes to fluvv, newest first. Versions follow
 [Semantic Versioning](https://semver.org/); the contract format has its own
 version in [the spec](docs/fluvv/SPEC.md).
 
-## [3.1.0] - 2026-11-15
+## [3.1.0] - 2026-11-22
 
 Publishing to a metadata catalog by its name, and tables by name in a
 catalog. Publishing to OpenMetadata this way needs `fluvv-openmetadata` 1.1,
