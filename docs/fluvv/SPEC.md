@@ -250,6 +250,12 @@ the contract level (the `transform` customProperty):
   this contract's `schema`. It is **required with two or more sources**.
   With exactly one source it may be omitted; the output is then that
   source's (transformed) view, i.e. `SELECT * FROM <id>`.
+- **A file's metadata:** for a source read from files, the transform that
+  reads its view first, its own or else the contract-level one, can name
+  Spark's `_metadata` (`_metadata.file_path` and the rest), e.g. for the
+  file a row came from, since Unity Catalog refuses `input_file_name()`.
+  Once it names `_metadata`, `*` there includes it, so list the columns;
+  in a join, qualify it (`s._metadata.file_path`).
 
 Spark SQL has no `QUALIFY`; deduplicate with `ROW_NUMBER() OVER (...)` in
 a subquery filtered by the outer `WHERE` (see the example's
